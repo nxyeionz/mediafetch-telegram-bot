@@ -210,3 +210,101 @@ def test_failed_conversion_keeps_original(monkeypatch, tmp_path) -> None:
     with pytest.raises(MediaError, match="convert"):
         _normalize_audio_for_telegram(source)
     assert source.read_bytes() == b"original"
+
+
+def test_instagram_image_post_audio_not_required() -> None:
+    # Single image post
+    info_image = MediaInfo(
+        url="https://www.instagram.com/p/testphoto/",
+        title="Photo Post",
+        uploader="photographer",
+        duration=0,
+        width=1080,
+        height=1350,
+        platform="Instagram",
+        automatic_best=True,
+        qualities=[],
+        raw={"type": "post", "entries": [{"kind": "image", "formats": [{"url": "http://img"}]}]},
+    )
+    assert not _audio_is_required(info_image)
+
+    # Carousel with mixed or image items
+    info_carousel = MediaInfo(
+        url="https://www.instagram.com/p/testcarousel/",
+        title="Carousel Post",
+        uploader="creator",
+        duration=0,
+        width=1080,
+        height=1080,
+        platform="Instagram",
+        automatic_best=True,
+        qualities=[],
+        raw={"type": "carousel", "entries": [{"kind": "image"}]},
+    )
+    assert not _audio_is_required(info_carousel)
+
+
+def test_instagram_probe_sync(monkeypatch) -> None:
+    from mediafetch.downloader import probe_sync
+
+    monkeypatch.setattr(
+        "parth_dl.get_info",
+        lambda url, verbose=False: {
+            "id": "123456",
+            "title": "Nice Sunset",
+            "uploader": "nature",
+            "duration": 0,
+            "type": "post",
+            "entries": [
+                {
+                    "kind": "image",
+                    "formats": [{"url": "https://cdn.example.com/sunset.jpg", "width": 1080, "height": 1350}],
+                }
+            ],
+        },
+    )
+    info = probe_sync("https://www.instagram.com/p/123456/")
+    assert info.platform == "Instagram"
+    assert info.title == "Nice Sunset"
+    assert info.uploader == "nature"
+    assert info.automatic_best is True
+    assert info.width == 1080
+    assert info.height == 1350
+
+
+def test_instagram_download_carousel(monkeypatch, tmp_path) -> None:
+    import threading
+    from mediafetch.downloader import _download_instagram
+
+    img1 = tmp_path / "img1.jpg"
+    img2 = tmp_path / "img2.jpg"
+    img1.write_bytes(b"image1_data")
+    img2.write_bytes(b"image2_data")
+
+    class DummyDownloader:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def download(self, *args, **kwargs):
+            return [str(img1), str(img2)]
+
+    monkeypatch.setattr("parth_dl.InstagramDownloader", DummyDownloader)
+
+    info = MediaInfo(
+        url="https://www.instagram.com/p/carousel/",
+        title="Album",
+        uploader="artist",
+        duration=0,
+        width=1080,
+        height=1080,
+        platform="Instagram",
+        automatic_best=True,
+        qualities=[],
+        raw={"type": "carousel", "entries": [{"kind": "image"}, {"kind": "image"}]},
+    )
+
+    results = _download_instagram(info, tmp_path, 10_000_000, threading.Event())
+    assert len(results) == 2
+    assert results[0] == img1
+    assert results[1] == img2
+

@@ -29,6 +29,8 @@ SUPPORTED_HOSTS = {
     "youtu.be",
     "instagram.com",
     "www.instagram.com",
+    "instagr.am",
+    "www.instagr.am",
     "x.com",
     "www.x.com",
     "twitter.com",
@@ -134,6 +136,20 @@ def _source_has_audio(info: dict[str, Any]) -> bool:
 
 
 def _audio_is_required(info: MediaInfo) -> bool:
+    if info.platform == "Instagram":
+        entries = info.raw.get("entries") or []
+        if any(item.get("kind") == "image" for item in entries) or info.raw.get("type") in {
+            "post",
+            "carousel",
+            "image",
+        }:
+            return False
+        video_entries = [item for item in entries if item.get("kind") == "video"]
+        if video_entries:
+            return any(
+                any(fmt.get("has_audio") for fmt in entry.get("formats", []))
+                for entry in video_entries
+            )
     if _source_has_audio(info.raw):
         return True
     if info.platform != "Instagram":
@@ -365,6 +381,45 @@ def _clear_job_files(directory: Path) -> None:
 def probe_sync(url: str) -> MediaInfo:
     if not supported_url(url):
         raise MediaError("Unsupported link")
+
+    parsed = urlparse(url.strip())
+    is_ig = (parsed.hostname or "").lower() in {
+        "instagram.com",
+        "www.instagram.com",
+        "instagr.am",
+        "www.instagr.am",
+    }
+    if is_ig:
+        try:
+            from parth_dl import get_info
+
+            ig_info = get_info(url, verbose=False)
+            if ig_info and (ig_info.get("entries") or ig_info.get("id")):
+                entries = ig_info.get("entries") or []
+                title = str(ig_info.get("title") or "Instagram media")
+                uploader = str(ig_info.get("uploader") or "")
+                duration = int(ig_info.get("duration") or 0)
+                width = None
+                height = None
+                if entries and entries[0].get("formats"):
+                    fmt0 = entries[0]["formats"][0]
+                    width = int(fmt0["width"]) if fmt0.get("width") else None
+                    height = int(fmt0["height"]) if fmt0.get("height") else None
+                return MediaInfo(
+                    url=url,
+                    title=title,
+                    uploader=uploader,
+                    duration=duration,
+                    width=width,
+                    height=height,
+                    platform="Instagram",
+                    automatic_best=True,
+                    qualities=[],
+                    raw=ig_info,
+                )
+        except Exception as exc:
+            logger.info("parth_dl Instagram probe failed, falling back to yt-dlp: %s", exc)
+
     options = {
         "quiet": True,
         "no_warnings": True,
@@ -404,6 +459,65 @@ async def probe(url: str) -> MediaInfo:
 ProgressCallback = Callable[[int, int | None, float | None], Awaitable[None]]
 
 
+def _download_instagram(
+    info: MediaInfo,
+    directory: Path,
+    max_bytes: int,
+    cancel: threading.Event,
+) -> list[Path]:
+    if cancel.is_set():
+        raise MediaError("Download cancelled")
+    try:
+        from parth_dl import InstagramDownloader
+
+        dl = InstagramDownloader(verbose=False, overwrite=True)
+        res = dl.download(
+            info.url,
+            output_path=directory,
+            output_mode="directory",
+            quality="best",
+            info=info.raw if "entries" in info.raw else None,
+        )
+    except Exception as exc:
+        logger.warning("parth_dl download failed: %s", exc)
+        return []
+
+    if cancel.is_set():
+        raise MediaError("Download cancelled")
+
+    if isinstance(res, (str, Path)):
+        raw_paths = [Path(res)]
+    elif isinstance(res, list):
+        raw_paths = [Path(p) for p in res]
+    else:
+        raw_paths = _media_files(directory)
+
+    valid_paths: list[Path] = []
+    audio_required = _audio_is_required(info)
+
+    for p in raw_paths:
+        if not p.exists() or p.stat().st_size == 0:
+            continue
+        if p.stat().st_size > max_bytes:
+            raise MediaError("Selected quality exceeds the configured size limit")
+
+        if p.suffix.lower() == ".mp4":
+            has_audio = _has_audio_stream(p)
+            if audio_required and not has_audio:
+                logger.warning("Instagram video has no audio track when required: %s", p)
+                continue
+            if has_audio:
+                try:
+                    p = _normalize_audio_for_telegram(p)
+                except Exception as exc:
+                    logger.warning("Audio normalization failed: %s", exc)
+                    if audio_required:
+                        raise
+        valid_paths.append(p)
+
+    return valid_paths
+
+
 def _download_sync(
     info: MediaInfo,
     height: int | None,
@@ -412,8 +526,13 @@ def _download_sync(
     cancel: threading.Event,
     loop: asyncio.AbstractEventLoop,
     progress: ProgressCallback,
-) -> Path:
+) -> list[Path]:
     directory.mkdir(parents=True, exist_ok=True)
+    if info.platform == "Instagram":
+        ig_paths = _download_instagram(info, directory, max_bytes, cancel)
+        if ig_paths:
+            return ig_paths
+
     last_update = 0.0
 
     def hook(status: dict[str, Any]) -> None:
@@ -507,7 +626,7 @@ def _download_sync(
         raise MediaError("Instagram did not expose an audio rendition for this Reel")
     if output.stat().st_size > max_bytes:
         raise MediaError("Selected quality exceeds the configured size limit")
-    return output
+    return [output]
 
 
 async def download(
@@ -517,7 +636,7 @@ async def download(
     max_bytes: int,
     cancel: threading.Event,
     progress: ProgressCallback,
-) -> Path:
+) -> list[Path]:
     loop = asyncio.get_running_loop()
     return await asyncio.to_thread(
         _download_sync, info, height, directory, max_bytes, cancel, loop, progress

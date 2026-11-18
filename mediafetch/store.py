@@ -12,6 +12,7 @@ class SharedMedia:
     file_id: str
     title: str
     caption: str
+    media_type: str = "video"
 
 
 class Store:
@@ -35,10 +36,17 @@ class Store:
                     file_id TEXT NOT NULL,
                     title TEXT NOT NULL,
                     caption TEXT NOT NULL,
+                    media_type TEXT NOT NULL DEFAULT 'video',
                     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
                 );
                 """
             )
+            try:
+                self._connection.execute(
+                    "ALTER TABLE shared_media ADD COLUMN media_type TEXT NOT NULL DEFAULT 'video'"
+                )
+            except sqlite3.OperationalError:
+                pass
 
     def set_panel(self, user_id: int, chat_id: int, message_id: int) -> None:
         with self._lock, self._connection:
@@ -62,14 +70,14 @@ class Store:
     def add_shared_media(self, token: str, media: SharedMedia) -> None:
         with self._lock, self._connection:
             self._connection.execute(
-                "INSERT INTO shared_media(token, owner_id, file_id, title, caption) VALUES(?, ?, ?, ?, ?)",
-                (token, media.owner_id, media.file_id, media.title, media.caption),
+                "INSERT INTO shared_media(token, owner_id, file_id, title, caption, media_type) VALUES(?, ?, ?, ?, ?, ?)",
+                (token, media.owner_id, media.file_id, media.title, media.caption, media.media_type),
             )
 
     def get_shared_media(self, token: str, owner_id: int) -> SharedMedia | None:
         with self._lock:
             row = self._connection.execute(
-                "SELECT owner_id, file_id, title, caption FROM shared_media WHERE token = ? AND owner_id = ?",
+                "SELECT owner_id, file_id, title, caption, media_type FROM shared_media WHERE token = ? AND owner_id = ?",
                 (token, owner_id),
             ).fetchone()
         if not row:
@@ -79,5 +87,6 @@ class Store:
             file_id=str(row["file_id"]),
             title=str(row["title"]),
             caption=str(row["caption"]),
+            media_type=str(row["media_type"]) if "media_type" in row.keys() else "video",
         )
 

@@ -82,6 +82,69 @@ class Telegram:
             },
         )
 
+    async def send_photo(
+        self,
+        chat_id: int,
+        path: Path,
+        caption: str,
+        reply_markup: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        form = aiohttp.FormData(quote_fields=False)
+        form.add_field("chat_id", str(chat_id))
+        form.add_field("caption", caption)
+        form.add_field("parse_mode", "HTML")
+        if reply_markup:
+            form.add_field("reply_markup", json.dumps(reply_markup, separators=(",", ":")))
+        content_type = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+        with path.open("rb") as stream:
+            form.add_field("photo", stream, filename=path.name, content_type=content_type)
+            async with self._session.post(f"{self._root}/sendPhoto", data=form) as response:
+                data = await response.json(content_type=None)
+        if not data.get("ok"):
+            raise TelegramError(f"sendPhoto: {data.get('description', 'unknown Telegram error')}")
+        return data["result"]
+
+    async def send_media_group(
+        self,
+        chat_id: int,
+        paths: list[Path],
+        caption: str = "",
+    ) -> list[dict[str, Any]]:
+        from contextlib import ExitStack
+
+        media_list = []
+        with ExitStack() as stack:
+            form = aiohttp.FormData(quote_fields=False)
+            form.add_field("chat_id", str(chat_id))
+            for idx, p in enumerate(paths):
+                attach_name = f"file{idx}"
+                is_video = p.suffix.lower() == ".mp4"
+                entry: dict[str, Any] = {
+                    "type": "video" if is_video else "photo",
+                    "media": f"attach://{attach_name}",
+                }
+                if idx == 0 and caption:
+                    entry["caption"] = caption
+                    entry["parse_mode"] = "HTML"
+                if is_video:
+                    entry["supports_streaming"] = True
+                media_list.append(entry)
+                fp = stack.enter_context(p.open("rb"))
+                content_type = (
+                    "video/mp4"
+                    if is_video
+                    else ("image/png" if p.suffix.lower() == ".png" else "image/jpeg")
+                )
+                form.add_field(attach_name, fp, filename=p.name, content_type=content_type)
+            form.add_field("media", json.dumps(media_list, separators=(",", ":")))
+            async with self._session.post(f"{self._root}/sendMediaGroup", data=form) as response:
+                data = await response.json(content_type=None)
+        if not data.get("ok"):
+            raise TelegramError(
+                f"sendMediaGroup: {data.get('description', 'unknown Telegram error')}"
+            )
+        return data["result"]
+
     async def send_video(
         self,
         chat_id: int,

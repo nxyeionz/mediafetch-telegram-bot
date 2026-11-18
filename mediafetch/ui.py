@@ -7,7 +7,7 @@ from typing import Any
 START_TEXT = """<b>MEDIA FETCH</b>
 YouTube • Instagram • X
 
-Download public videos directly inside Telegram.
+Download public videos, reels, and posts directly inside Telegram.
 
 <b>YouTube Videos</b>
 Choose the required quality.
@@ -15,8 +15,8 @@ Choose the required quality.
 <b>YouTube Shorts</b>
 Highest quality with source audio automatically.
 
-<b>Instagram Reels</b>
-Highest quality with source music/audio automatically.
+<b>Instagram Reels & Posts</b>
+Highest quality videos, photos, and carousels automatically.
 
 <b>X Videos</b>
 Highest quality with source audio automatically.
@@ -24,11 +24,11 @@ Highest quality with source audio automatically.
 🆓 Free for everyone
 🍪 Cookie-free  •  🧹 Automatic cleanup"""
 
-WAITING_TEXT = """<b>🔗 Send your video link</b>
+WAITING_TEXT = """<b>🔗 Send your media link</b>
 
 Supported:
 • YouTube videos and Shorts
-• Instagram Reels and video posts
+• Instagram Reels, photos, and carousel posts
 • X videos
 
 Send one public link below."""
@@ -38,8 +38,8 @@ HELP_TEXT = """<b>How Media Fetch works</b>
 1. Press Download Video
 2. Send a public link
 3. Choose quality for regular YouTube videos
-4. Shorts, Reels and X use highest quality with source audio
-5. Receive the video
+4. Shorts, Instagram (Reels/posts) and X use highest quality automatically
+5. Receive your media (video, photo, or carousel)
 6. Press Forward to share it
 
 Private, login-required, deleted and region-restricted media are unavailable."""

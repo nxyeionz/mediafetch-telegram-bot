@@ -14,3 +14,44 @@ def test_config_from_env(monkeypatch, tmp_path: Path) -> None:
     assert config.allowed_user_ids == frozenset({123, 456})
     assert config.max_concurrent_downloads == 2
     assert config.database_path == tmp_path / "state.db"
+
+
+def test_store_shared_media_types(tmp_path: Path) -> None:
+    from mediafetch.store import Store, SharedMedia
+
+    db_file = tmp_path / "test_store.db"
+    store = Store(db_file)
+
+    # Add video
+    store.add_shared_media(
+        "tok_vid",
+        SharedMedia(
+            owner_id=123,
+            file_id="vid_123",
+            title="Video Title",
+            caption="Video Caption",
+            media_type="video",
+        ),
+    )
+    # Add photo
+    store.add_shared_media(
+        "tok_pho",
+        SharedMedia(
+            owner_id=123,
+            file_id="pho_123",
+            title="Photo Title",
+            caption="Photo Caption",
+            media_type="photo",
+        ),
+    )
+
+    vid = store.get_shared_media("tok_vid", 123)
+    assert vid is not None
+    assert vid.file_id == "vid_123"
+    assert vid.media_type == "video"
+
+    pho = store.get_shared_media("tok_pho", 123)
+    assert pho is not None
+    assert pho.file_id == "pho_123"
+    assert pho.media_type == "photo"
+

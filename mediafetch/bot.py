@@ -150,7 +150,7 @@ class Bot:
             await self.show_panel(
                 user_id,
                 chat_id,
-                "<b>⚠ Unsupported link</b>\n\nSend a public YouTube, Instagram, or X video link.",
+                "<b>⚠ Unsupported link</b>\n\nSend a public YouTube, Instagram, or X media link.",
                 cancel_keyboard(),
             )
 
@@ -193,19 +193,25 @@ class Bot:
         if not media:
             await self.telegram.answer_inline(query_id, [])
             return
-        await self.telegram.answer_inline(
-            query_id,
-            [
-                {
-                    "type": "video",
-                    "id": token,
-                    "video_file_id": media.file_id,
-                    "title": media.title,
-                    "caption": media.caption,
-                    "parse_mode": "HTML",
-                }
-            ],
-        )
+        if media.media_type == "photo":
+            result = {
+                "type": "photo",
+                "id": token,
+                "photo_file_id": media.file_id,
+                "title": media.title,
+                "caption": media.caption,
+                "parse_mode": "HTML",
+            }
+        else:
+            result = {
+                "type": "video",
+                "id": token,
+                "video_file_id": media.file_id,
+                "title": media.title,
+                "caption": media.caption,
+                "parse_mode": "HTML",
+            }
+        await self.telegram.answer_inline(query_id, [result])
 
     async def cancel(self, user_id: int, chat_id: int) -> None:
         self.awaiting_url.discard(user_id)
@@ -319,7 +325,7 @@ class Bot:
                 f"<b>⬇ Downloading</b>\n\n░░░░░░░░░░ 0%\n\nQuality: {label}",
                 cancel_keyboard(),
             )
-            path = await download(
+            paths = await download(
                 job.info,
                 height,
                 job.directory,
@@ -329,31 +335,67 @@ class Bot:
             )
             if job.cancel.is_set():
                 return
+            if not paths:
+                raise MediaError("No media files were downloaded")
             await self.telegram.edit_message(
                 job.chat_id,
                 job.panel_message_id,
                 "<b>📤 Uploading to Telegram</b>\n\n█████████░ 95%",
                 cancel_keyboard(),
             )
-            size = path.stat().st_size
-            dimensions = ""
-            if job.info.width and job.info.height:
-                dimensions = f"{job.info.width} × {job.info.height} • "
-            caption = f"<b>✅ Download complete</b>\n\n{dimensions}{job.info.duration // 60:02d}:{job.info.duration % 60:02d} • {human_bytes(size)}"
             token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
-            message = await self.telegram.send_video(
-                job.chat_id, path, caption, forward_keyboard(token)
-            )
-            file_id = str(message["video"]["file_id"])
-            self.store.add_shared_media(
-                token,
-                SharedMedia(
-                    owner_id=job.user_id,
-                    file_id=file_id,
-                    title=job.info.title[:200],
-                    caption=caption,
-                ),
-            )
+            if len(paths) == 1:
+                path = paths[0]
+                size = path.stat().st_size
+                dimensions = ""
+                if job.info.width and job.info.height:
+                    dimensions = f"{job.info.width} × {job.info.height} • "
+                is_video = path.suffix.lower() == ".mp4"
+                if is_video:
+                    duration_str = f"{job.info.duration // 60:02d}:{job.info.duration % 60:02d} • " if job.info.duration else ""
+                    caption = f"<b>✅ Download complete</b>\n\n{dimensions}{duration_str}{human_bytes(size)}"
+                    message = await self.telegram.send_video(
+                        job.chat_id, path, caption, forward_keyboard(token)
+                    )
+                    file_id = str(message["video"]["file_id"])
+                    self.store.add_shared_media(
+                        token,
+                        SharedMedia(
+                            owner_id=job.user_id,
+                            file_id=file_id,
+                            title=job.info.title[:200],
+                            caption=caption,
+                            media_type="video",
+                        ),
+                    )
+                else:
+                    caption = f"<b>✅ Download complete</b>\n\n{dimensions}{human_bytes(size)}"
+                    message = await self.telegram.send_photo(
+                        job.chat_id, path, caption, forward_keyboard(token)
+                    )
+                    photos = message.get("photo") or []
+                    file_id = str(photos[-1]["file_id"]) if photos else ""
+                    if file_id:
+                        self.store.add_shared_media(
+                            token,
+                            SharedMedia(
+                                owner_id=job.user_id,
+                                file_id=file_id,
+                                title=job.info.title[:200],
+                                caption=caption,
+                                media_type="photo",
+                            ),
+                        )
+            else:
+                total_size = sum(p.stat().st_size for p in paths)
+                caption = f"<b>✅ Download complete</b>\n\n{len(paths)} items • {human_bytes(total_size)}"
+                chunk_size = 10
+                for i in range(0, len(paths), chunk_size):
+                    chunk = paths[i : i + chunk_size]
+                    batch_caption = caption if i == 0 else ""
+                    await self.telegram.send_media_group(
+                        job.chat_id, chunk, caption=batch_caption
+                    )
             await self.telegram.delete_message(job.chat_id, job.panel_message_id)
             self.store.clear_panel(job.user_id)
         except MediaError as exc:
