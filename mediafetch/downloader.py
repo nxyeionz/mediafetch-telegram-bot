@@ -101,12 +101,16 @@ class MediaError(RuntimeError):
 
 def _extractor_args() -> dict[str, dict[str, list[str]]]:
     provider_url = os.getenv("YTDLP_POT_PROVIDER_URL", "").strip()
-    if not provider_url:
-        return {}
-    return {
-        "youtube": {"player_client": ["mweb"]},
-        "youtubepot-bgutilhttp": {"base_url": [provider_url.rstrip("/")]},
+    args: dict[str, dict[str, list[str]]] = {
+        "youtube": {
+            "player_client": ["android", "web"],
+            "formats": ["missing_pot"],
+        }
     }
+    if provider_url:
+        args["youtube"]["player_client"] = ["mweb"]
+        args["youtubepot-bgutilhttp"] = {"base_url": [provider_url.rstrip("/")]}
+    return args
 
 
 @dataclass(frozen=True)
@@ -157,11 +161,13 @@ def quality_options(info: dict[str, Any]) -> list[Quality]:
         for item in formats
         if item.get("height") and item.get("vcodec") != "none"
     }
-    standard = [2160, 1440, 1080, 720, 480, 360]
+    standard = [2160, 1440, 1080, 720, 480, 360, 240, 144]
+    selected = [h for h in standard if h in available]
+    if not selected and available:
+        selected = sorted(available, reverse=True)[:6]
     return [
         Quality(height, _estimate_by_height(formats, height))
-        for height in standard
-        if height in available
+        for height in selected
     ]
 
 
@@ -748,6 +754,7 @@ def _download_audio_sync(
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "extractor_args": _extractor_args(),
         "format": "bestaudio/best",
         "postprocessors": [
             {

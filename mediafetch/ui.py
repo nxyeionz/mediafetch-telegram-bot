@@ -105,7 +105,11 @@ def human_bytes(value: int | None) -> str:
 
 def quality_keyboard(job_id: str, qualities: list[Quality]) -> dict[str, Any]:
     if not qualities:
-        return cancel_keyboard()
+        return keyboard(
+            [button("🎬 Best Available Quality", callback_data=f"quality:{job_id}:best", style="success")],
+            [button("🎵 MP3 Audio (320kbps)", callback_data=f"quality:{job_id}:audio", style="primary")],
+            [button("✖ Cancel", callback_data=f"quality:{job_id}:cancel", style="danger")],
+        )
     ordered = sorted(qualities, key=lambda item: item.height, reverse=True)
     highest = ordered[0].height
     rows: list[list[dict[str, Any]]] = []
@@ -116,15 +120,19 @@ def quality_keyboard(job_id: str, qualities: list[Quality]) -> dict[str, Any]:
             label += " • Best"
             style = "success"
         if item.height == 1080:
-            label += " + Recommended" if item.height == highest else " • Recommended"
+            label += " • Full HD"
             if style is None:
                 style = "primary"
+        elif item.height == 720 and style is None:
+            label += " • HD"
         size = human_bytes(item.estimated_bytes)
         if size:
-            label += f" • ~{size}"
+            label += f" (~{size})"
         rows.append([button(label, callback_data=f"quality:{job_id}:{item.height}", style=style)])
-    rows.append([button("🎵 MP3 Audio (320kbps)", callback_data=f"quality:{job_id}:audio", style="primary")])
-    rows.append([button("✖ Cancel", callback_data="download:cancel", style="danger")])
+    rows.append(
+        [button("🎵 MP3 Audio (320kbps)", callback_data=f"quality:{job_id}:audio", style="primary")]
+    )
+    rows.append([button("✖ Cancel", callback_data=f"quality:{job_id}:cancel", style="danger")])
     return keyboard(*rows)
 
 

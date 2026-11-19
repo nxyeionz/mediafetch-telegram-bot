@@ -59,7 +59,7 @@ class Bot:
         self.store = store
         self.awaiting_url: set[int] = set()
         self.pending: dict[str, PendingJob] = {}
-        self.active_by_user: dict[int, PendingJob] = {}
+        self.active_jobs: dict[str, PendingJob] = {}
         self.tasks: set[asyncio.Task[Any]] = set()
         self.download_slots = asyncio.Semaphore(config.max_concurrent_downloads)
         self.telethon: Any = None
@@ -212,14 +212,36 @@ class Bot:
             parts = data.split(":")
             if len(parts) != 3:
                 return
-            job = self.pending.get(parts[1])
+            job_id = parts[1]
+            action = parts[2]
+            job = self.pending.get(job_id)
             if not job or job.user_id != user_id:
-                await self.show_panel(user_id, chat_id, "<b>⚠ Selection expired</b>", start_keyboard())
+                try:
+                    await self.telegram.answer_callback(
+                        callback_id, "Selection expired or already running"
+                    )
+                except Exception:
+                    pass
                 return
-            if parts[2] == "audio":
+            if action == "cancel":
+                job.cancel.set()
+                cleanup(job.directory)
+                self.pending.pop(job_id, None)
+                try:
+                    await self.telegram.delete_message(chat_id, job.panel_message_id)
+                except Exception:
+                    pass
+                return
+            if action == "audio":
                 task = asyncio.create_task(self.process_job(job, None, is_audio=True))
+            elif action == "best":
+                task = asyncio.create_task(self.process_job(job, None, is_audio=False))
             else:
-                task = asyncio.create_task(self.process_job(job, int(parts[2]), is_audio=False))
+                try:
+                    height = int(action)
+                except ValueError:
+                    height = None
+                task = asyncio.create_task(self.process_job(job, height, is_audio=False))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
 
@@ -266,9 +288,9 @@ class Bot:
 
     async def cancel(self, user_id: int, chat_id: int) -> None:
         self.awaiting_url.discard(user_id)
-        active = self.active_by_user.get(user_id)
-        if active:
-            active.cancel.set()
+        for job_id, job in list(self.active_jobs.items()):
+            if job.user_id == user_id:
+                job.cancel.set()
         for job_id, job in list(self.pending.items()):
             if job.user_id == user_id:
                 job.cancel.set()
@@ -280,41 +302,45 @@ class Bot:
         self, user_id: int, chat_id: int, url: str, reply_to_message_id: int | None = None
     ) -> None:
         self.awaiting_url.discard(user_id)
-        if user_id in self.active_by_user:
-            await self.show_panel(
-                user_id,
+        try:
+            panel_msg = await self.telegram.send_message(
                 chat_id,
-                "<b>⚠ One download is already running</b>",
+                "<b>🔎 Analysing link…</b>\n\n████░░░░░░",
                 cancel_keyboard(),
                 reply_to_message_id=reply_to_message_id,
             )
+            panel_id = int(panel_msg["message_id"])
+        except TelegramError:
+            logger.exception("Failed to send initial analysis panel")
             return
-        panel_id = await self.show_panel(
-            user_id,
-            chat_id,
-            "<b>🔎 Analysing link…</b>\n\n████░░░░░░",
-            cancel_keyboard(),
-            reply_to_message_id=reply_to_message_id,
-        )
+
         try:
             info = await probe(url)
         except MediaError:
             logger.exception("Metadata extraction failed")
-            await self.show_panel(
-                user_id,
-                chat_id,
-                "<b>⚠ Media unavailable</b>\n\nThe link may be private, login-required, deleted, restricted, or temporarily unavailable.",
-                start_keyboard(),
-            )
+            try:
+                await self.telegram.edit_message(
+                    chat_id,
+                    panel_id,
+                    "<b>⚠ Media unavailable</b>\n\nThe link may be private, login-required, deleted, restricted, or temporarily unavailable.",
+                    start_keyboard(),
+                )
+            except TelegramError:
+                pass
             return
+
         if info.duration and info.duration > self.config.max_duration_seconds:
-            await self.show_panel(
-                user_id,
-                chat_id,
-                "<b>⚠ Video is longer than the configured limit</b>",
-                start_keyboard(),
-            )
+            try:
+                await self.telegram.edit_message(
+                    chat_id,
+                    panel_id,
+                    "<b>⚠ Video is longer than the configured limit</b>",
+                    start_keyboard(),
+                )
+            except TelegramError:
+                pass
             return
+
         job_id = uuid.uuid4().hex[:8]
         job = PendingJob(
             job_id=job_id,
@@ -327,28 +353,36 @@ class Bot:
             reply_to_message_id=reply_to_message_id,
         )
         self.pending[job_id] = job
+
         if info.automatic_best:
             task = asyncio.create_task(self.process_job(job, None))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
             return
+
         details = [f"<b>🎬 {safe(info.title)}</b>", "", safe(info.platform)]
         if info.uploader:
             details.append(safe(info.uploader))
         if info.duration:
             details.append(f"Duration: {info.duration // 60:02d}:{info.duration % 60:02d}")
-        details.extend(["", "Choose video quality:"])
-        await self.show_panel(
-            user_id, chat_id, "\n".join(details), quality_keyboard(job_id, info.qualities)
-        )
+        details.extend(["", "Choose quality:"])
+        try:
+            await self.telegram.edit_message(
+                chat_id,
+                panel_id,
+                "\n".join(details),
+                quality_keyboard(job_id, info.qualities),
+            )
+        except TelegramError:
+            pass
 
     async def process_job(
         self, job: PendingJob, height: int | None, is_audio: bool = False
     ) -> None:
-        if job.user_id in self.active_by_user:
+        if job.job_id in self.active_jobs:
             return
         self.pending.pop(job.job_id, None)
-        self.active_by_user[job.user_id] = job
+        self.active_jobs[job.job_id] = job
         label = "MP3 (320kbps)" if is_audio else (f"{height}p" if height else "highest available")
         slot_acquired = False
 
@@ -607,7 +641,6 @@ class Bot:
                         reply_to_message_id=chunk_reply_to,
                     )
             await self.telegram.delete_message(job.chat_id, job.panel_message_id)
-            self.store.clear_panel(job.user_id)
         except MediaError as exc:
             if not job.cancel.is_set():
                 logger.warning("Download failed: %s", exc)
@@ -617,23 +650,29 @@ class Bot:
                     if "audio rendition" in str(exc).lower()
                     else "The media became unavailable, exceeded the size limit, or the platform rejected the request."
                 )
-                await self.show_panel(
-                    job.user_id,
-                    job.chat_id,
-                    f"<b>⚠ Download failed</b>\n\n{detail}",
-                    start_keyboard(),
-                )
+                try:
+                    await self.telegram.edit_message(
+                        job.chat_id,
+                        job.panel_message_id,
+                        f"<b>⚠ Download failed</b>\n\n{detail}",
+                        start_keyboard(),
+                    )
+                except TelegramError:
+                    pass
         except TelegramError:
             logger.exception("Telegram upload failed")
-            await self.show_panel(
-                job.user_id,
-                job.chat_id,
-                "<b>⚠ Telegram upload failed</b>\n\nTry a smaller quality.",
-                start_keyboard(),
-            )
+            try:
+                await self.telegram.edit_message(
+                    job.chat_id,
+                    job.panel_message_id,
+                    "<b>⚠ Telegram upload failed</b>\n\nTry a smaller quality.",
+                    start_keyboard(),
+                )
+            except TelegramError:
+                pass
         finally:
             if slot_acquired:
                 self.download_slots.release()
             cleanup(job.directory)
             self.pending.pop(job.job_id, None)
-            self.active_by_user.pop(job.user_id, None)
+            self.active_jobs.pop(job.job_id, None)

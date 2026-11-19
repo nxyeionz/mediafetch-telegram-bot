@@ -167,3 +167,32 @@ async def test_web_routes(tmp_path: Path) -> None:
         # Missing token
         resp = await client.get("/dl/nonexistent")
         assert resp.status == 404
+
+
+def test_youtube_extractor_args() -> None:
+    from mediafetch.downloader import _extractor_args
+
+    args = _extractor_args()
+    assert "youtube" in args
+    assert "android" in args["youtube"]["player_client"]
+    assert "missing_pot" in args["youtube"]["formats"]
+
+
+def test_quality_options_includes_all_resolutions() -> None:
+    from mediafetch.downloader import quality_options
+
+    info = {
+        "formats": [
+            {"height": 2160, "vcodec": "avc1"},
+            {"height": 1440, "vcodec": "avc1"},
+            {"height": 1080, "vcodec": "avc1"},
+            {"height": 720, "vcodec": "avc1"},
+            {"height": 480, "vcodec": "avc1"},
+            {"height": 360, "vcodec": "avc1"},
+            {"height": 240, "vcodec": "avc1"},
+            {"height": 144, "vcodec": "avc1"},
+        ]
+    }
+    opts = quality_options(info)
+    assert [q.height for q in opts] == [2160, 1440, 1080, 720, 480, 360, 240, 144]
+
