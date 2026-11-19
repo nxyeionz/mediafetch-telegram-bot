@@ -38,6 +38,7 @@ class PendingJob:
     info: MediaInfo
     directory: Path
     cancel: threading.Event
+    reply_to_message_id: int | None = None
 
 
 class Bot:
@@ -107,7 +108,12 @@ class Bot:
             logger.exception("Update handling failed")
 
     async def show_panel(
-        self, user_id: int, chat_id: int, text: str, markup: dict[str, Any]
+        self,
+        user_id: int,
+        chat_id: int,
+        text: str,
+        markup: dict[str, Any],
+        reply_to_message_id: int | None = None,
     ) -> int:
         existing = self.store.get_panel(user_id)
         if existing:
@@ -119,7 +125,9 @@ class Bot:
                 if "message is not modified" in str(exc).lower():
                     return message_id
                 self.store.clear_panel(user_id)
-        message = await self.telegram.send_message(chat_id, text, markup)
+        message = await self.telegram.send_message(
+            chat_id, text, markup, reply_to_message_id=reply_to_message_id
+        )
         message_id = int(message["message_id"])
         self.store.set_panel(user_id, chat_id, message_id)
         return message_id
@@ -144,8 +152,8 @@ class Bot:
             await self.cancel(user_id, chat_id)
             return
         if supported_url(text):
-            await self.telegram.delete_message(chat_id, int(message["message_id"]))
-            await self.receive_url(user_id, chat_id, text)
+            message_id = int(message["message_id"])
+            await self.receive_url(user_id, chat_id, text, reply_to_message_id=message_id)
             return
         if user_id in self.awaiting_url:
             await self.show_panel(
@@ -226,15 +234,25 @@ class Bot:
                 self.pending.pop(job_id, None)
         await self.show_panel(user_id, chat_id, START_TEXT, start_keyboard())
 
-    async def receive_url(self, user_id: int, chat_id: int, url: str) -> None:
+    async def receive_url(
+        self, user_id: int, chat_id: int, url: str, reply_to_message_id: int | None = None
+    ) -> None:
         self.awaiting_url.discard(user_id)
         if user_id in self.active_by_user:
             await self.show_panel(
-                user_id, chat_id, "<b>⚠ One download is already running</b>", cancel_keyboard()
+                user_id,
+                chat_id,
+                "<b>⚠ One download is already running</b>",
+                cancel_keyboard(),
+                reply_to_message_id=reply_to_message_id,
             )
             return
         panel_id = await self.show_panel(
-            user_id, chat_id, "<b>🔎 Analysing link…</b>\n\n████░░░░░░", cancel_keyboard()
+            user_id,
+            chat_id,
+            "<b>🔎 Analysing link…</b>\n\n████░░░░░░",
+            cancel_keyboard(),
+            reply_to_message_id=reply_to_message_id,
         )
         try:
             info = await probe(url)
@@ -264,6 +282,7 @@ class Bot:
             info=info,
             directory=self.config.jobs_dir / job_id,
             cancel=threading.Event(),
+            reply_to_message_id=reply_to_message_id,
         )
         self.pending[job_id] = job
         if info.automatic_best:
@@ -345,6 +364,7 @@ class Bot:
                 cancel_keyboard(),
             )
             token = secrets.token_urlsafe(6).replace("-", "").replace("_", "")[:8]
+            reply_to = job.reply_to_message_id
             if len(paths) == 1:
                 path = paths[0]
                 size = path.stat().st_size
@@ -352,7 +372,11 @@ class Bot:
                 caption = format_caption(job.info, height, size, is_video=is_video)
                 if is_video:
                     message = await self.telegram.send_video(
-                        job.chat_id, path, caption, forward_keyboard(token)
+                        job.chat_id,
+                        path,
+                        caption,
+                        forward_keyboard(token),
+                        reply_to_message_id=reply_to,
                     )
                     file_id = str(message["video"]["file_id"])
                     self.store.add_shared_media(
@@ -367,7 +391,11 @@ class Bot:
                     )
                 else:
                     message = await self.telegram.send_photo(
-                        job.chat_id, path, caption, forward_keyboard(token)
+                        job.chat_id,
+                        path,
+                        caption,
+                        forward_keyboard(token),
+                        reply_to_message_id=reply_to,
                     )
                     photos = message.get("photo") or []
                     file_id = str(photos[-1]["file_id"]) if photos else ""
@@ -391,8 +419,12 @@ class Bot:
                 for i in range(0, len(paths), chunk_size):
                     chunk = paths[i : i + chunk_size]
                     batch_caption = caption if i == 0 else ""
+                    chunk_reply_to = reply_to if i == 0 else None
                     await self.telegram.send_media_group(
-                        job.chat_id, chunk, caption=batch_caption
+                        job.chat_id,
+                        chunk,
+                        caption=batch_caption,
+                        reply_to_message_id=chunk_reply_to,
                     )
             await self.telegram.delete_message(job.chat_id, job.panel_message_id)
             self.store.clear_panel(job.user_id)

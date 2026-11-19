@@ -34,18 +34,23 @@ class Telegram:
         )
 
     async def send_message(
-        self, chat_id: int, text: str, reply_markup: dict[str, Any] | None = None
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: dict[str, Any] | None = None,
+        reply_to_message_id: int | None = None,
     ) -> dict[str, Any]:
-        return await self.call(
-            "sendMessage",
-            {
-                "chat_id": chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-                "reply_markup": reply_markup,
-            },
-        )
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": reply_markup,
+        }
+        if reply_to_message_id:
+            payload["reply_to_message_id"] = reply_to_message_id
+            payload["allow_sending_without_reply"] = True
+        return await self.call("sendMessage", payload)
 
     async def edit_message(
         self, chat_id: int, message_id: int, text: str, reply_markup: dict[str, Any] | None = None
@@ -88,11 +93,15 @@ class Telegram:
         path: Path,
         caption: str,
         reply_markup: dict[str, Any] | None = None,
+        reply_to_message_id: int | None = None,
     ) -> dict[str, Any]:
         form = aiohttp.FormData(quote_fields=False)
         form.add_field("chat_id", str(chat_id))
         form.add_field("caption", caption)
         form.add_field("parse_mode", "HTML")
+        if reply_to_message_id:
+            form.add_field("reply_to_message_id", str(reply_to_message_id))
+            form.add_field("allow_sending_without_reply", "true")
         if reply_markup:
             form.add_field("reply_markup", json.dumps(reply_markup, separators=(",", ":")))
         content_type = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
@@ -109,6 +118,7 @@ class Telegram:
         chat_id: int,
         paths: list[Path],
         caption: str = "",
+        reply_to_message_id: int | None = None,
     ) -> list[dict[str, Any]]:
         from contextlib import ExitStack
 
@@ -116,6 +126,9 @@ class Telegram:
         with ExitStack() as stack:
             form = aiohttp.FormData(quote_fields=False)
             form.add_field("chat_id", str(chat_id))
+            if reply_to_message_id:
+                form.add_field("reply_to_message_id", str(reply_to_message_id))
+                form.add_field("allow_sending_without_reply", "true")
             for idx, p in enumerate(paths):
                 attach_name = f"file{idx}"
                 is_video = p.suffix.lower() == ".mp4"
@@ -151,12 +164,16 @@ class Telegram:
         path: Path,
         caption: str,
         reply_markup: dict[str, Any],
+        reply_to_message_id: int | None = None,
     ) -> dict[str, Any]:
         form = aiohttp.FormData(quote_fields=False)
         form.add_field("chat_id", str(chat_id))
         form.add_field("caption", caption)
         form.add_field("parse_mode", "HTML")
         form.add_field("supports_streaming", "true")
+        if reply_to_message_id:
+            form.add_field("reply_to_message_id", str(reply_to_message_id))
+            form.add_field("allow_sending_without_reply", "true")
         form.add_field("reply_markup", json.dumps(reply_markup, separators=(",", ":")))
         with path.open("rb") as stream:
             form.add_field("video", stream, filename=path.name, content_type="video/mp4")

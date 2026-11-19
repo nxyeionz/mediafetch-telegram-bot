@@ -1,5 +1,7 @@
 from types import SimpleNamespace
 
+import pytest
+
 from mediafetch.ui import (
     Quality,
     format_caption,
@@ -90,5 +92,29 @@ def test_caption_truncates_safely_under_telegram_limit() -> None:
     caption = format_caption(info, None, 1_000_000, is_video=False)
     assert len(caption) <= 1024
     assert caption.endswith("…\n\n━━━━━━━━━━━━━━━━━━━━\n📸 Instagram Photo • 1080 × 1080 • 💾 976.6 KB")
+
+
+@pytest.mark.asyncio
+async def test_telegram_send_message_with_reply(monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+    from mediafetch.telegram import Telegram
+
+    tg = Telegram("test-token", "https://api.telegram.org", AsyncMock())
+    mock_call = AsyncMock(return_value={"message_id": 999})
+    monkeypatch.setattr(tg, "call", mock_call)
+    await tg.send_message(123, "hello", reply_to_message_id=456)
+    mock_call.assert_awaited_once_with(
+        "sendMessage",
+        {
+            "chat_id": 123,
+            "text": "hello",
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+            "reply_markup": None,
+            "reply_to_message_id": 456,
+            "allow_sending_without_reply": True,
+        },
+    )
+
 
 
