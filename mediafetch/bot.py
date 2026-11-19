@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
+import shutil
 import threading
 import uuid
 from dataclasses import dataclass
@@ -10,14 +11,24 @@ from pathlib import Path
 from typing import Any
 
 from .config import Config
-from .downloader import MediaError, MediaInfo, cleanup, download, probe, safe, supported_url
-from .store import SharedMedia, Store
+from .downloader import (
+    MediaError,
+    MediaInfo,
+    cleanup,
+    download,
+    download_audio,
+    probe,
+    safe,
+    supported_url,
+)
+from .store import SharedMedia, Store, WebMedia
 from .telegram import Telegram, TelegramError
 from .ui import (
     HELP_TEXT,
     START_TEXT,
     WAITING_TEXT,
     cancel_keyboard,
+    format_audio_caption,
     format_caption,
     forward_keyboard,
     human_bytes,
@@ -186,7 +197,10 @@ class Bot:
             if not job or job.user_id != user_id:
                 await self.show_panel(user_id, chat_id, "<b>⚠ Selection expired</b>", start_keyboard())
                 return
-            task = asyncio.create_task(self.process_job(job, int(parts[2])))
+            if parts[2] == "audio":
+                task = asyncio.create_task(self.process_job(job, None, is_audio=True))
+            else:
+                task = asyncio.create_task(self.process_job(job, int(parts[2]), is_audio=False))
             self.tasks.add(task)
             task.add_done_callback(self.tasks.discard)
 
@@ -207,6 +221,15 @@ class Bot:
                 "type": "photo",
                 "id": token,
                 "photo_file_id": media.file_id,
+                "title": media.title,
+                "caption": media.caption,
+                "parse_mode": "HTML",
+            }
+        elif media.media_type == "audio":
+            result = {
+                "type": "audio",
+                "id": token,
+                "audio_file_id": media.file_id,
                 "title": media.title,
                 "caption": media.caption,
                 "parse_mode": "HTML",
@@ -280,7 +303,7 @@ class Bot:
             chat_id=chat_id,
             panel_message_id=panel_id,
             info=info,
-            directory=self.config.jobs_dir / job_id,
+            directory=self.config.temp_processing_dir / job_id,
             cancel=threading.Event(),
             reply_to_message_id=reply_to_message_id,
         )
@@ -300,12 +323,14 @@ class Bot:
             user_id, chat_id, "\n".join(details), quality_keyboard(job_id, info.qualities)
         )
 
-    async def process_job(self, job: PendingJob, height: int | None) -> None:
+    async def process_job(
+        self, job: PendingJob, height: int | None, is_audio: bool = False
+    ) -> None:
         if job.user_id in self.active_by_user:
             return
         self.pending.pop(job.job_id, None)
         self.active_by_user[job.user_id] = job
-        label = f"{height}p" if height else "highest available"
+        label = "MP3 (320kbps)" if is_audio else (f"{height}p" if height else "highest available")
         slot_acquired = False
 
         async def progress(downloaded: int, total: int | None, speed: float | None) -> None:
@@ -345,14 +370,23 @@ class Bot:
                 f"<b>⬇ Downloading</b>\n\n░░░░░░░░░░ 0%\n\nQuality: {label}",
                 cancel_keyboard(),
             )
-            paths = await download(
-                job.info,
-                height,
-                job.directory,
-                self.config.max_file_bytes,
-                job.cancel,
-                progress,
-            )
+            if is_audio:
+                path = await download_audio(
+                    job.info,
+                    job.directory,
+                    job.cancel,
+                    progress,
+                )
+                paths = [path]
+            else:
+                paths = await download(
+                    job.info,
+                    height,
+                    job.directory,
+                    self.config.max_web_file_bytes,
+                    job.cancel,
+                    progress,
+                )
             if job.cancel.is_set():
                 return
             if not paths:
@@ -369,8 +403,85 @@ class Bot:
                 path = paths[0]
                 size = path.stat().st_size
                 is_video = path.suffix.lower() == ".mp4"
-                caption = format_caption(job.info, height, size, is_video=is_video)
-                if is_video:
+
+                if size > self.config.max_file_bytes:
+                    web_token = secrets.token_urlsafe(12).replace("-", "").replace("_", "")
+                    self.config.web_media_dir.mkdir(parents=True, exist_ok=True)
+                    dest_file = self.config.web_media_dir / f"{web_token}_{path.name}"
+                    shutil.move(str(path), str(dest_file))
+
+                    content_type = (
+                        "audio/mpeg"
+                        if is_audio
+                        else ("video/mp4" if is_video else "application/octet-stream")
+                    )
+                    self.store.add_web_media(
+                        web_token,
+                        WebMedia(
+                            token=web_token,
+                            file_path=str(dest_file),
+                            filename=path.name,
+                            title=job.info.title,
+                            content_type=content_type,
+                            size=size,
+                            owner_id=job.user_id,
+                        ),
+                    )
+
+                    watch_url = f"{self.config.web_base_url}/watch/{web_token}"
+                    dl_url = f"{self.config.web_base_url}/dl/{web_token}"
+                    media_type_name = "Audio" if is_audio else "Video"
+
+                    text = (
+                        f"<b>⚡ {media_type_name} Ready ({human_bytes(size)})</b>\n\n"
+                        f"🎬 <b>{safe(job.info.title)}</b>\n"
+                        f"Quality: <b>{label}</b>\n\n"
+                        f"<i>File exceeds Telegram's 50MB limit, so it is hosted directly on your high-speed Singapore server!</i>\n\n"
+                        f"▶️ <a href=\"{watch_url}\"><b>Watch / Stream Online</b></a>\n"
+                        f"⬇️ <a href=\"{dl_url}\"><b>Direct High-Speed Download</b></a>\n\n"
+                        f"⏰ <i>Link valid for 24 hours</i>"
+                    )
+                    markup = {
+                        "inline_keyboard": [
+                            [
+                                {"text": "▶️ Watch Online", "url": watch_url},
+                                {"text": "⬇️ Direct Download", "url": dl_url},
+                            ],
+                            [
+                                {"text": "➕ Download Another", "callback_data": "download:start"},
+                            ],
+                        ]
+                    }
+                    await self.telegram.send_message(
+                        job.chat_id, text, markup, reply_to_message_id=reply_to
+                    )
+                elif is_audio:
+                    caption = format_audio_caption(job.info, size)
+                    message = await self.telegram.send_audio(
+                        job.chat_id,
+                        path,
+                        caption,
+                        title=job.info.title[:100],
+                        performer=job.info.uploader[:100] if job.info.uploader else None,
+                        duration=job.info.duration if job.info.duration else None,
+                        reply_markup=forward_keyboard(token),
+                        reply_to_message_id=reply_to,
+                    )
+                    audio_info = message.get("audio") or {}
+                    file_id = str(audio_info.get("file_id") or "")
+                    if file_id:
+                        self.store.add_shared_media(
+                            token,
+                            SharedMedia(
+                                owner_id=job.user_id,
+                                file_id=file_id,
+                                title=job.info.title[:200],
+                                caption=caption,
+                                media_type="audio",
+                            ),
+                        )
+                elif is_video:
+                    caption = format_caption(job.info, height, size, is_video=True)
                     message = await self.telegram.send_video(
                         job.chat_id,
                         path,
@@ -390,6 +501,7 @@ class Bot:
                         ),
                     )
                 else:
+                    caption = format_caption(job.info, height, size, is_video=False)
                     message = await self.telegram.send_photo(
                         job.chat_id,
                         path,

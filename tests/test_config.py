@@ -12,7 +12,7 @@ def test_config_from_env(monkeypatch, tmp_path: Path) -> None:
     assert config.bot_token == "test-token"
     assert config.public_access is True
     assert config.allowed_user_ids == frozenset({123, 456})
-    assert config.max_concurrent_downloads == 2
+    assert config.max_concurrent_downloads == 8
     assert config.database_path == tmp_path / "state.db"
 
 

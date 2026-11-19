@@ -71,6 +71,27 @@ SUPPORTED_HOSTS = {
     "www.x.com",
     "twitter.com",
     "www.twitter.com",
+    "tiktok.com",
+    "www.tiktok.com",
+    "vm.tiktok.com",
+    "vt.tiktok.com",
+    "m.tiktok.com",
+    "pinterest.com",
+    "www.pinterest.com",
+    "pin.it",
+    "in.pinterest.com",
+    "facebook.com",
+    "www.facebook.com",
+    "m.facebook.com",
+    "fb.watch",
+    "web.facebook.com",
+    "reddit.com",
+    "www.reddit.com",
+    "redd.it",
+    "v.redd.it",
+    "old.reddit.com",
+    "threads.net",
+    "www.threads.net",
 }
 
 
@@ -152,6 +173,16 @@ def _platform(info: dict[str, Any]) -> str:
         return "Instagram"
     if "twitter" in extractor or extractor == "x":
         return "X"
+    if "tiktok" in extractor:
+        return "TikTok"
+    if "pinterest" in extractor:
+        return "Pinterest"
+    if "facebook" in extractor:
+        return "Facebook"
+    if "reddit" in extractor:
+        return "Reddit"
+    if "threads" in extractor:
+        return "Threads"
     return extractor.title() or "Media"
 
 
@@ -295,6 +326,8 @@ def _normalize_audio_for_telegram(path: Path) -> Path:
             os.getenv("FFMPEG_BIN", "ffmpeg"),
             "-y",
             "-nostdin",
+            "-threads",
+            "4",
             "-v",
             "error",
             "-i",
@@ -610,6 +643,7 @@ def _download_sync(
         "retries": 3,
         "fragment_retries": 3,
         "concurrent_fragment_downloads": 2,
+        "postprocessor_args": {"ffmpeg": ["-threads", "4"]},
     }
     audio_required = _audio_is_required(info)
     output: Path | None = None
@@ -683,6 +717,84 @@ async def download(
     loop = asyncio.get_running_loop()
     return await asyncio.to_thread(
         _download_sync, info, height, directory, max_bytes, cancel, loop, progress
+    )
+
+
+def _download_audio_sync(
+    info: MediaInfo,
+    directory: Path,
+    cancel: threading.Event,
+    loop: asyncio.AbstractEventLoop,
+    progress: ProgressCallback,
+) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    last_update = 0.0
+
+    def hook(status: dict[str, Any]) -> None:
+        nonlocal last_update
+        if cancel.is_set():
+            raise yt_dlp.utils.DownloadError("Download cancelled")
+        now = time.monotonic()
+        if status.get("status") == "downloading" and now - last_update >= 2:
+            last_update = now
+            downloaded = int(status.get("downloaded_bytes") or 0)
+            total = status.get("total_bytes") or status.get("total_bytes_estimate")
+            speed = status.get("speed")
+            asyncio.run_coroutine_threadsafe(
+                progress(downloaded, int(total) if total else None, speed), loop
+            )
+
+    options = {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "format": "bestaudio/best",
+        "postprocessors": [
+            {
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": "320",
+            }
+        ],
+        "outtmpl": str(directory / "%(id)s.%(ext)s"),
+        "progress_hooks": [hook],
+        "overwrites": True,
+        "retries": 3,
+        "fragment_retries": 3,
+        "postprocessor_args": {"ffmpeg": ["-threads", "4"]},
+    }
+    with yt_dlp.YoutubeDL(options) as ydl:
+        ydl.extract_info(info.url, download=True)
+
+    files = sorted(
+        [p for p in directory.iterdir() if p.is_file() and p.suffix.lower() == ".mp3"],
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not files:
+        files = sorted(
+            [
+                p
+                for p in directory.iterdir()
+                if p.is_file() and p.suffix.lower() in {".mp3", ".m4a", ".aac", ".opus"}
+            ],
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+    if not files:
+        raise MediaError("Could not extract audio track")
+    return files[0]
+
+
+async def download_audio(
+    info: MediaInfo,
+    directory: Path,
+    cancel: threading.Event,
+    progress: ProgressCallback,
+) -> Path:
+    loop = asyncio.get_running_loop()
+    return await asyncio.to_thread(
+        _download_audio_sync, info, directory, cancel, loop, progress
     )
 
 

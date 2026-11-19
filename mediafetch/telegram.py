@@ -183,3 +183,38 @@ class Telegram:
             raise TelegramError(f"sendVideo: {data.get('description', 'unknown Telegram error')}")
         return data["result"]
 
+    async def send_audio(
+        self,
+        chat_id: int,
+        path: Path,
+        caption: str = "",
+        title: str = "",
+        performer: str = "",
+        duration: int | None = None,
+        reply_markup: dict[str, Any] | None = None,
+        reply_to_message_id: int | None = None,
+    ) -> dict[str, Any]:
+        form = aiohttp.FormData(quote_fields=False)
+        form.add_field("chat_id", str(chat_id))
+        if caption:
+            form.add_field("caption", caption)
+            form.add_field("parse_mode", "HTML")
+        if title:
+            form.add_field("title", title)
+        if performer:
+            form.add_field("performer", performer)
+        if duration:
+            form.add_field("duration", str(duration))
+        if reply_to_message_id:
+            form.add_field("reply_to_message_id", str(reply_to_message_id))
+            form.add_field("allow_sending_without_reply", "true")
+        if reply_markup:
+            form.add_field("reply_markup", json.dumps(reply_markup, separators=(",", ":")))
+        with path.open("rb") as stream:
+            form.add_field("audio", stream, filename=path.name, content_type="audio/mpeg")
+            async with self._session.post(f"{self._root}/sendAudio", data=form) as response:
+                data = await response.json(content_type=None)
+        if not data.get("ok"):
+            raise TelegramError(f"sendAudio: {data.get('description', 'unknown Telegram error')}")
+        return data["result"]
+

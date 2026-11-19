@@ -21,6 +21,10 @@ services:
       - key: MAX_DURATION_SECONDS
         value: "2700"
       - key: MAX_CONCURRENT_DOWNLOADS
-        value: "2"
+        value: "8"
       - key: POLL_TIMEOUT
         value: "45"
+      - key: WEB_BASE_URL
+        value: "https://mediafetch-bot-sg.onrender.com"
+      - key: MAX_WEB_FILE_BYTES
+        value: "2147483648"

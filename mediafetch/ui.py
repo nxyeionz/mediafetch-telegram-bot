@@ -5,45 +5,47 @@ from dataclasses import dataclass
 from typing import Any
 
 
-START_TEXT = """<b>MEDIA FETCH</b>
-YouTube • Instagram • X
+START_TEXT = """<b>MEDIA FETCH PRO</b>
+YouTube • Instagram • TikTok • Pinterest • X • Facebook • Reddit
 
-Download public videos, reels, and posts directly inside Telegram.
+Download public videos, reels, photos, and high-quality MP3 audio directly inside Telegram or stream online.
 
-<b>YouTube Videos</b>
-Choose the required quality.
+<b>YouTube Videos & Shorts</b>
+Choose video quality (1080p, 720p, etc.) or extract 320kbps MP3 audio.
 
-<b>YouTube Shorts</b>
-Highest quality with source audio automatically.
+<b>Instagram Reels, Posts & Carousels</b>
+Highest quality videos, photos, and albums automatically.
 
-<b>Instagram Reels & Posts</b>
-Highest quality videos, photos, and carousels automatically.
-
-<b>X Videos</b>
-Highest quality with source audio automatically.
+<b>TikTok, Pinterest, Facebook, Reddit & X</b>
+Watermark-free videos with original audio automatically.
 
 🆓 Free for everyone
-🍪 Cookie-free  •  🧹 Automatic cleanup"""
+⚡ Render Pro Singapore Powered (8x Concurrency)
+🍪 Cookie-free  •  🌐 Web Streaming & Direct DL"""
 
 WAITING_TEXT = """<b>🔗 Send your media link</b>
 
-Supported:
-• YouTube videos and Shorts
-• Instagram Reels, photos, and carousel posts
-• X videos
+Supported platforms:
+• YouTube videos & Shorts
+• Instagram Reels, photos & carousels
+• TikTok videos
+• Pinterest pins & videos
+• Facebook reels & videos
+• Reddit videos with audio
+• X (Twitter) videos
 
-Send one public link below."""
+Send any public link below."""
 
 HELP_TEXT = """<b>How Media Fetch works</b>
 
-1. Press Download Video
-2. Send a public link
-3. Choose quality for regular YouTube videos
-4. Shorts, Instagram (Reels/posts) and X use highest quality automatically
-5. Receive your media (video, photo, or carousel)
-6. Press Forward to share it
+1. Press Download Video or send any public link directly
+2. Choose video quality or select 🎵 MP3 Audio
+3. Shorts, Reels, TikTok, and X use highest quality automatically
+4. Receive media directly in chat as a thread reply
+5. Large files (>50MB) can be streamed or downloaded directly via high-speed web link
+6. Press Forward to share via Telegram inline
 
-Private, login-required, deleted and region-restricted media are unavailable."""
+Private, login-required, and deleted media are unavailable."""
 
 
 def button(text: str, *, style: str | None = None, **action: Any) -> dict[str, Any]:
@@ -121,6 +123,7 @@ def quality_keyboard(job_id: str, qualities: list[Quality]) -> dict[str, Any]:
         if size:
             label += f" • ~{size}"
         rows.append([button(label, callback_data=f"quality:{job_id}:{item.height}", style=style)])
+    rows.append([button("🎵 MP3 Audio (320kbps)", callback_data=f"quality:{job_id}:audio", style="primary")])
     rows.append([button("✖ Cancel", callback_data="download:cancel", style="danger")])
     return keyboard(*rows)
 
@@ -248,3 +251,29 @@ def format_caption(
         max_body_len = 1024 - len(footer)
         body = truncate_caption(content_text or title, max_body_len)
         return f"{body}{footer}".strip()
+
+
+def format_audio_caption(info: Any, size: int) -> str:
+    title = (getattr(info, "title", "") or "Audio").strip()
+    uploader = (getattr(info, "uploader", "") or "").strip()
+    duration = getattr(info, "duration", 0) or 0
+    if duration:
+        if duration >= 3600:
+            duration_str = f"{duration // 3600:02d}:{(duration % 3600) // 60:02d}:{duration % 60:02d}"
+        else:
+            duration_str = f"{duration // 60:02d}:{duration % 60:02d}"
+    else:
+        duration_str = ""
+    size_str = human_bytes(size)
+
+    header = "🎵 <b>Audio Extracted (MP3 320kbps)</b>\n"
+    body = f"<b>{html.escape(title, quote=False)}</b>"
+    meta = []
+    if duration_str:
+        meta.append(f"⏱ {duration_str}")
+    if size_str:
+        meta.append(f"💾 {size_str}")
+    if uploader:
+        meta.append(f"👤 {html.escape(uploader, quote=False)}")
+    footer = f"\n\n{' • '.join(meta)}" if meta else ""
+    return f"{header}{body}{footer}".strip()
