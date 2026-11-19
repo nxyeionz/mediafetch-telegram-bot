@@ -153,6 +153,26 @@ async def health(_: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
+async def diag(request: web.Request) -> web.Response:
+    url = request.query.get("url", "https://youtu.be/YihPV4eSHsQ")
+    import traceback
+    from .downloader import probe_sync
+    try:
+        info = await asyncio.to_thread(probe_sync, url)
+        return web.json_response({
+            "ok": True,
+            "title": info.title,
+            "platform": info.platform,
+            "qualities": [q.height for q in info.qualities],
+        })
+    except Exception as e:
+        return web.json_response({
+            "ok": False,
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+        })
+
+
 async def handle_download(request: web.Request) -> web.StreamResponse:
     store: Store = request.app["store"]
     token = request.match_info.get("token", "")
@@ -242,6 +262,7 @@ async def run() -> None:
         app = web.Application()
         app["store"] = store
         app.router.add_get("/health", health)
+        app.router.add_get("/diag", diag)
         app.router.add_get("/dl/{token}", handle_download)
         app.router.add_get("/watch/{token}", handle_watch)
         runner = web.AppRunner(app)
