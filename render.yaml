@@ -28,3 +28,7 @@ services:
         value: "https://mediafetch-bot-sg.onrender.com"
       - key: MAX_WEB_FILE_BYTES
         value: "2147483648"
+      - key: TELEGRAM_API_ID
+        sync: false
+      - key: TELEGRAM_API_HASH
+        sync: false

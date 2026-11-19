@@ -38,6 +38,8 @@ class Config:
     port: int
     web_base_url: str
     max_web_file_bytes: int = 2147483648
+    telegram_api_id: int | None = None
+    telegram_api_hash: str | None = None
 
     @property
     def database_path(self) -> Path:
@@ -81,4 +83,6 @@ class Config:
             port=int(os.getenv("PORT", "8080")),
             web_base_url=os.getenv("WEB_BASE_URL", "https://mediafetch-bot-sg.onrender.com").rstrip("/"),
             max_web_file_bytes=int(os.getenv("MAX_WEB_FILE_BYTES", "2147483648")),
+            telegram_api_id=int(os.getenv("TELEGRAM_API_ID")) if os.getenv("TELEGRAM_API_ID") else None,
+            telegram_api_hash=os.getenv("TELEGRAM_API_HASH") or None,
         )

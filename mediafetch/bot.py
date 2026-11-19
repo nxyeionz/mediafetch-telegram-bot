@@ -62,11 +62,30 @@ class Bot:
         self.active_by_user: dict[int, PendingJob] = {}
         self.tasks: set[asyncio.Task[Any]] = set()
         self.download_slots = asyncio.Semaphore(config.max_concurrent_downloads)
+        self.telethon: Any = None
+        if self.config.telegram_api_id and self.config.telegram_api_hash:
+            try:
+                from telethon import TelegramClient
+
+                session_path = str(self.config.data_dir / "telethon_bot.session")
+                self.telethon = TelegramClient(
+                    session_path,
+                    self.config.telegram_api_id,
+                    self.config.telegram_api_hash,
+                )
+            except Exception:
+                logger.exception("Failed to initialize Telethon client")
 
     def authorized(self, user_id: int) -> bool:
         return self.config.public_access or user_id in self.config.allowed_user_ids
 
     async def run(self) -> None:
+        if self.telethon:
+            try:
+                await self.telethon.start(bot_token=self.config.bot_token)
+                logger.info("Telethon MTProto 2GB uploader client started successfully")
+            except Exception:
+                logger.exception("Failed to start Telethon MTProto client")
         try:
             await self.telegram.call("deleteWebhook", {"drop_pending_updates": False})
             await self.telegram.call(
@@ -405,56 +424,105 @@ class Bot:
                 is_video = path.suffix.lower() == ".mp4"
 
                 if size > self.config.max_file_bytes:
-                    web_token = secrets.token_urlsafe(12).replace("-", "").replace("_", "")
-                    self.config.web_media_dir.mkdir(parents=True, exist_ok=True)
-                    dest_file = self.config.web_media_dir / f"{web_token}_{path.name}"
-                    shutil.move(str(path), str(dest_file))
+                    uploaded_via_telethon = False
+                    if self.telethon and self.telethon.is_connected():
+                        try:
+                            await self.telegram.edit_message(
+                                job.chat_id,
+                                job.panel_message_id,
+                                f"<b>📤 Uploading to Telegram (Direct 2GB MTProto)</b>\n\nSize: {human_bytes(size)}\n░░░░░░░░░░ 0%",
+                                cancel_keyboard(),
+                            )
+                            last_telethon_up = 0.0
 
-                    content_type = (
-                        "audio/mpeg"
-                        if is_audio
-                        else ("video/mp4" if is_video else "application/octet-stream")
-                    )
-                    self.store.add_web_media(
-                        web_token,
-                        WebMedia(
-                            token=web_token,
-                            file_path=str(dest_file),
-                            filename=path.name,
-                            title=job.info.title,
-                            content_type=content_type,
-                            size=size,
-                            owner_id=job.user_id,
-                        ),
-                    )
+                            async def telethon_progress(current: int, total: int) -> None:
+                                nonlocal last_telethon_up
+                                if job.cancel.is_set():
+                                    return
+                                now = time.monotonic()
+                                if now - last_telethon_up >= 2:
+                                    last_telethon_up = now
+                                    pct = min(99, int(current * 100 / total)) if total else 0
+                                    filled_b = pct // 10
+                                    prog = "█" * filled_b + "░" * (10 - filled_b)
+                                    try:
+                                        await self.telegram.edit_message(
+                                            job.chat_id,
+                                            job.panel_message_id,
+                                            f"<b>📤 Uploading direct to Telegram</b>\n\n{prog} {pct}%\n{human_bytes(current)} / {human_bytes(total)}",
+                                            cancel_keyboard(),
+                                        )
+                                    except TelegramError:
+                                        pass
 
-                    watch_url = f"{self.config.web_base_url}/watch/{web_token}"
-                    dl_url = f"{self.config.web_base_url}/dl/{web_token}"
-                    media_type_name = "Audio" if is_audio else "Video"
+                            caption_text = (
+                                format_audio_caption(job.info, size)
+                                if is_audio
+                                else format_caption(job.info, height, size, is_video=is_video)
+                            )
+                            await self.telethon.send_file(
+                                entity=job.chat_id,
+                                file=path,
+                                caption=caption_text,
+                                supports_streaming=is_video,
+                                reply_to=reply_to,
+                                progress_callback=telethon_progress,
+                            )
+                            uploaded_via_telethon = True
+                        except Exception:
+                            logger.exception("Telethon direct upload failed, falling back to web server")
 
-                    text = (
-                        f"<b>⚡ {media_type_name} Ready ({human_bytes(size)})</b>\n\n"
-                        f"🎬 <b>{safe(job.info.title)}</b>\n"
-                        f"Quality: <b>{label}</b>\n\n"
-                        f"<i>File exceeds Telegram's 50MB limit, so it is hosted directly on your high-speed Singapore server!</i>\n\n"
-                        f"▶️ <a href=\"{watch_url}\"><b>Watch / Stream Online</b></a>\n"
-                        f"⬇️ <a href=\"{dl_url}\"><b>Direct High-Speed Download</b></a>\n\n"
-                        f"⏰ <i>Link valid for 24 hours</i>"
-                    )
-                    markup = {
-                        "inline_keyboard": [
-                            [
-                                {"text": "▶️ Watch Online", "url": watch_url},
-                                {"text": "⬇️ Direct Download", "url": dl_url},
-                            ],
-                            [
-                                {"text": "➕ Download Another", "callback_data": "download:start"},
-                            ],
-                        ]
-                    }
-                    await self.telegram.send_message(
-                        job.chat_id, text, markup, reply_to_message_id=reply_to
-                    )
+                    if not uploaded_via_telethon:
+                        web_token = secrets.token_urlsafe(12).replace("-", "").replace("_", "")
+                        self.config.web_media_dir.mkdir(parents=True, exist_ok=True)
+                        dest_file = self.config.web_media_dir / f"{web_token}_{path.name}"
+                        shutil.move(str(path), str(dest_file))
+
+                        content_type = (
+                            "audio/mpeg"
+                            if is_audio
+                            else ("video/mp4" if is_video else "application/octet-stream")
+                        )
+                        self.store.add_web_media(
+                            web_token,
+                            WebMedia(
+                                token=web_token,
+                                file_path=str(dest_file),
+                                filename=path.name,
+                                title=job.info.title,
+                                content_type=content_type,
+                                size=size,
+                                owner_id=job.user_id,
+                            ),
+                        )
+
+                        watch_url = f"{self.config.web_base_url}/watch/{web_token}"
+                        dl_url = f"{self.config.web_base_url}/dl/{web_token}"
+                        media_type_name = "Audio" if is_audio else "Video"
+
+                        text = (
+                            f"<b>⚡ {media_type_name} Ready ({human_bytes(size)})</b>\n\n"
+                            f"🎬 <b>{safe(job.info.title)}</b>\n"
+                            f"Quality: <b>{label}</b>\n\n"
+                            f"<i>File exceeds Telegram's 50MB limit, so it is hosted directly on your high-speed Singapore server!</i>\n\n"
+                            f"▶️ <a href=\"{watch_url}\"><b>Watch / Stream Online</b></a>\n"
+                            f"⬇️ <a href=\"{dl_url}\"><b>Direct High-Speed Download</b></a>\n\n"
+                            f"⏰ <i>Link valid for 24 hours</i>"
+                        )
+                        markup = {
+                            "inline_keyboard": [
+                                [
+                                    {"text": "▶️ Watch Online", "url": watch_url},
+                                    {"text": "⬇️ Direct Download", "url": dl_url},
+                                ],
+                                [
+                                    {"text": "➕ Download Another", "callback_data": "download:start"},
+                                ],
+                            ]
+                        }
+                        await self.telegram.send_message(
+                            job.chat_id, text, markup, reply_to_message_id=reply_to
+                        )
                 elif is_audio:
                     caption = format_audio_caption(job.info, size)
                     message = await self.telegram.send_audio(
