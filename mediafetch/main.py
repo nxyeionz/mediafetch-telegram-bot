@@ -155,22 +155,43 @@ async def health(_: web.Request) -> web.Response:
 
 async def diag(request: web.Request) -> web.Response:
     url = request.query.get("url", "https://youtu.be/YihPV4eSHsQ")
-    import traceback
-    from .downloader import probe_sync
-    try:
-        info = await asyncio.to_thread(probe_sync, url)
-        return web.json_response({
-            "ok": True,
-            "title": info.title,
-            "platform": info.platform,
-            "qualities": [q.height for q in info.qualities],
-        })
-    except Exception as e:
-        return web.json_response({
-            "ok": False,
-            "error": str(e),
-            "traceback": traceback.format_exc(),
-        })
+    import yt_dlp
+
+    clients_to_test = [
+        ["ios"],
+        ["android"],
+        ["tv"],
+        ["tv_embedded"],
+        ["web_embedded"],
+        ["mweb"],
+        ["android_vr"],
+        ["ios", "android"],
+        ["tv", "android"],
+    ]
+    results = {}
+    for clients in clients_to_test:
+        key = ",".join(clients)
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "extractor_args": {
+                "youtube": {
+                    "player_client": clients,
+                    "formats": ["missing_pot"],
+                }
+            },
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = await asyncio.to_thread(ydl.extract_info, url, download=False)
+                fmts = info.get("formats") or []
+                heights = sorted(set(f["height"] for f in fmts if f.get("height")))
+                results[key] = {"ok": True, "title": info.get("title")[:40], "heights": heights}
+        except Exception as e:
+            results[key] = {"ok": False, "error": str(e)[:150]}
+
+    return web.json_response(results)
 
 
 async def handle_download(request: web.Request) -> web.StreamResponse:
