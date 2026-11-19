@@ -18,6 +18,7 @@ from .ui import (
     START_TEXT,
     WAITING_TEXT,
     cancel_keyboard,
+    format_caption,
     forward_keyboard,
     human_bytes,
     quality_keyboard,
@@ -347,13 +348,9 @@ class Bot:
             if len(paths) == 1:
                 path = paths[0]
                 size = path.stat().st_size
-                dimensions = ""
-                if job.info.width and job.info.height:
-                    dimensions = f"{job.info.width} × {job.info.height} • "
                 is_video = path.suffix.lower() == ".mp4"
+                caption = format_caption(job.info, height, size, is_video=is_video)
                 if is_video:
-                    duration_str = f"{job.info.duration // 60:02d}:{job.info.duration % 60:02d} • " if job.info.duration else ""
-                    caption = f"<b>✅ Download complete</b>\n\n{dimensions}{duration_str}{human_bytes(size)}"
                     message = await self.telegram.send_video(
                         job.chat_id, path, caption, forward_keyboard(token)
                     )
@@ -369,7 +366,6 @@ class Bot:
                         ),
                     )
                 else:
-                    caption = f"<b>✅ Download complete</b>\n\n{dimensions}{human_bytes(size)}"
                     message = await self.telegram.send_photo(
                         job.chat_id, path, caption, forward_keyboard(token)
                     )
@@ -388,7 +384,9 @@ class Bot:
                         )
             else:
                 total_size = sum(p.stat().st_size for p in paths)
-                caption = f"<b>✅ Download complete</b>\n\n{len(paths)} items • {human_bytes(total_size)}"
+                caption = format_caption(
+                    job.info, height, total_size, item_count=len(paths), is_video=False
+                )
                 chunk_size = 10
                 for i in range(0, len(paths), chunk_size):
                     chunk = paths[i : i + chunk_size]

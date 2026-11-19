@@ -22,6 +22,42 @@ from .ui import Quality
 logger = logging.getLogger(__name__)
 
 
+def _patch_parth_dl() -> None:
+    try:
+        import parth_dl.extractors
+
+        orig_graphql = parth_dl.extractors.MediaExtractor._parse_graphql_media
+        orig_item = parth_dl.extractors.MediaExtractor._parse_media_item
+
+        def _patched_graphql(self, media):
+            res = orig_graphql(self, media)
+            edges = media.get("edge_media_to_caption", {}).get("edges") or []
+            if edges:
+                text = edges[0].get("node", {}).get("text", "")
+                if text:
+                    res["caption"] = text
+                    res["title"] = text
+            return res
+
+        def _patched_item(self, item):
+            res = orig_item(self, item)
+            cap = item.get("caption") or {}
+            if isinstance(cap, dict):
+                text = cap.get("text", "")
+                if text:
+                    res["caption"] = text
+                    res["title"] = text
+            return res
+
+        parth_dl.extractors.MediaExtractor._parse_graphql_media = _patched_graphql
+        parth_dl.extractors.MediaExtractor._parse_media_item = _patched_item
+    except Exception as exc:
+        logger.warning("Could not patch parth_dl extractor: %s", exc)
+
+
+_patch_parth_dl()
+
+
 SUPPORTED_HOSTS = {
     "youtube.com",
     "www.youtube.com",
@@ -64,6 +100,7 @@ class MediaInfo:
     automatic_best: bool
     qualities: list[Quality]
     raw: dict[str, Any]
+    caption: str = ""
 
 
 def supported_url(value: str) -> bool:
@@ -396,6 +433,7 @@ def probe_sync(url: str) -> MediaInfo:
             ig_info = get_info(url, verbose=False)
             if ig_info and (ig_info.get("entries") or ig_info.get("id")):
                 entries = ig_info.get("entries") or []
+                caption = str(ig_info.get("caption") or ig_info.get("title") or "").strip()
                 title = str(ig_info.get("title") or "Instagram media")
                 uploader = str(ig_info.get("uploader") or "")
                 duration = int(ig_info.get("duration") or 0)
@@ -416,6 +454,7 @@ def probe_sync(url: str) -> MediaInfo:
                     automatic_best=True,
                     qualities=[],
                     raw=ig_info,
+                    caption=caption,
                 )
         except Exception as exc:
             logger.info("parth_dl Instagram probe failed, falling back to yt-dlp: %s", exc)
@@ -438,9 +477,12 @@ def probe_sync(url: str) -> MediaInfo:
     if not info:
         raise MediaError("No media found")
     platform = _platform(info)
+    title = str(info.get("title") or "Untitled video")
+    description = str(info.get("description") or "").strip()
+    caption = description if description else title
     return MediaInfo(
         url=url,
-        title=str(info.get("title") or "Untitled video"),
+        title=title,
         uploader=str(info.get("uploader") or info.get("channel") or ""),
         duration=int(info.get("duration") or 0),
         width=int(info["width"]) if info.get("width") else None,
@@ -449,6 +491,7 @@ def probe_sync(url: str) -> MediaInfo:
         automatic_best=_automatic_best(url, info, platform),
         qualities=quality_options(info),
         raw=info,
+        caption=caption,
     )
 
 
