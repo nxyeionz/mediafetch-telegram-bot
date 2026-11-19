@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+import aiohttp
+
 from .config import Config
 from .downloader import (
     MediaError,
@@ -17,6 +19,7 @@ from .downloader import (
     cleanup,
     download,
     download_audio,
+    get_cookie_file,
     probe,
     safe,
     supported_url,
@@ -94,6 +97,7 @@ class Bot:
                     "commands": [
                         {"command": "start", "description": "Open Media Fetch"},
                         {"command": "help", "description": "Supported links and usage"},
+                        {"command": "cookies", "description": "YouTube cookies status and guide"},
                         {"command": "cancel", "description": "Cancel active download"},
                     ]
                 },
@@ -166,10 +170,69 @@ class Bot:
         sender = message.get("from") or {}
         user_id = int(sender.get("id") or 0)
         chat_id = int(message["chat"]["id"])
+        msg_id = int(message.get("message_id") or 0)
         text = str(message.get("text") or "").strip()
         if not self.authorized(user_id):
             await self.telegram.send_message(chat_id, "🔒 Private bot")
             return
+
+        document = message.get("document")
+        if document:
+            file_name = str(document.get("file_name") or "").lower()
+            if file_name.endswith(".txt") or "cookie" in file_name:
+                try:
+                    file_id = document["file_id"]
+                    file_info = await self.telegram.call("getFile", {"file_id": file_id})
+                    file_path = file_info.get("file_path")
+                    if not file_path:
+                        await self.telegram.send_message(
+                            chat_id, "❌ Could not retrieve file path from Telegram.", reply_to_message_id=msg_id
+                        )
+                        return
+                    download_url = f"{self.config.bot_api_base}/file/bot{self.config.bot_token}/{file_path}"
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(download_url) as resp:
+                            if resp.status != 200:
+                                await self.telegram.send_message(
+                                    chat_id, f"❌ Download failed with HTTP {resp.status}.", reply_to_message_id=msg_id
+                                )
+                                return
+                            content = await resp.read()
+
+                    if len(content) == 0:
+                        await self.telegram.send_message(
+                            chat_id, "❌ Uploaded file is empty.", reply_to_message_id=msg_id
+                        )
+                        return
+
+                    dest1 = self.config.data_dir / "cookies.txt"
+                    dest1.parent.mkdir(parents=True, exist_ok=True)
+                    dest1.write_bytes(content)
+
+                    try:
+                        Path("cookies.txt").write_bytes(content)
+                    except Exception:
+                        pass
+
+                    size_kb = len(content) / 1024
+                    await self.telegram.send_message(
+                        chat_id,
+                        (
+                            f"✅ <b>YouTube Cookies Saved Successfully!</b>\n\n"
+                            f"📁 File size: <code>{size_kb:.1f} KB</code>\n"
+                            f"📍 Saved to persistent storage\n\n"
+                            f"🚀 <b>YouTube downloads are now unlocked!</b> Send your video link now to download."
+                        ),
+                        reply_to_message_id=msg_id,
+                    )
+                    return
+                except Exception as exc:
+                    logger.exception("Failed to process uploaded cookie file")
+                    await self.telegram.send_message(
+                        chat_id, f"❌ Failed to process cookie file: {exc}", reply_to_message_id=msg_id
+                    )
+                    return
+
         command = text.split(maxsplit=1)[0].split("@", 1)[0].lower() if text.startswith("/") else ""
         if command == "/start":
             self.awaiting_url.discard(user_id)
@@ -177,6 +240,35 @@ class Bot:
             return
         if command == "/help":
             await self.show_panel(user_id, chat_id, HELP_TEXT, start_keyboard())
+            return
+        if command == "/cookies":
+            cf = get_cookie_file()
+            if cf:
+                try:
+                    sz = Path(cf).stat().st_size / 1024
+                except Exception:
+                    sz = 0.0
+                cookie_text = (
+                    f"🍪 <b>YouTube Cookies: Active ✅</b>\n\n"
+                    f"📁 Size: <code>{sz:.1f} KB</code>\n"
+                    f"📍 Path: <code>{cf}</code>\n\n"
+                    f"To update cookies anytime, just drop a new <code>cookies.txt</code> file here."
+                )
+            else:
+                cookie_text = (
+                    "🍪 <b>YouTube Cookies: Not Configured ❌</b>\n\n"
+                    "Because this bot is hosted on a high-speed cloud datacenter (Singapore), "
+                    "YouTube requires cookie authentication to prevent anti-bot blocking.\n\n"
+                    "👉 <b>How to set up in 30 seconds:</b>\n"
+                    "1. On Chrome/Brave/Edge browser, install the free extension: <b>'Get cookies.txt LOCALLY'</b>.\n"
+                    "2. Go to <b>youtube.com</b> (logged into any Google account).\n"
+                    "3. Click the extension icon and click <b>Export</b>.\n"
+                    "4. Drop or send the exported <code>cookies.txt</code> file here into this chat!\n\n"
+                    "The bot will automatically activate it instantly."
+                )
+            await self.telegram.send_message(
+                chat_id, cookie_text, reply_to_message_id=msg_id
+            )
             return
         if command == "/cancel":
             await self.cancel(user_id, chat_id)
@@ -316,13 +408,29 @@ class Bot:
 
         try:
             info = await probe(url)
-        except MediaError:
-            logger.exception("Metadata extraction failed")
+        except MediaError as err:
+            logger.exception("Metadata extraction failed: %s", err)
+            err_msg = str(err).lower()
+            if "bot" in err_msg or "sign in" in err_msg or "cookie" in err_msg:
+                panel_text = (
+                    "⚠️ <b>YouTube Bot Verification Required</b>\n\n"
+                    "YouTube blocked this cloud server IP (<i>Sign in to confirm you’re not a bot</i>).\n\n"
+                    "👉 <b>How to unlock in 30 seconds:</b>\n"
+                    "1. In your browser (PC/laptop), install free extension: <b>'Get cookies.txt LOCALLY'</b>\n"
+                    "2. Open <b>youtube.com</b> (logged into your account) and click <b>Export</b>\n"
+                    "3. <b>Send or drag-and-drop the <code>cookies.txt</code> file here into this chat!</b>\n\n"
+                    "The bot will automatically save it and unlock YouTube downloads."
+                )
+            else:
+                panel_text = (
+                    "<b>⚠ Media unavailable</b>\n\n"
+                    "The link may be private, login-required, deleted, restricted, or temporarily unavailable."
+                )
             try:
                 await self.telegram.edit_message(
                     chat_id,
                     panel_id,
-                    "<b>⚠ Media unavailable</b>\n\nThe link may be private, login-required, deleted, restricted, or temporarily unavailable.",
+                    panel_text,
                     start_keyboard(),
                 )
             except TelegramError:
@@ -644,12 +752,19 @@ class Bot:
         except MediaError as exc:
             if not job.cancel.is_set():
                 logger.warning("Download failed: %s", exc)
-                detail = (
-                    "Instagram did not provide any audio-enabled rendition for this Reel. "
-                    "A silent video was blocked instead of being sent."
-                    if "audio rendition" in str(exc).lower()
-                    else "The media became unavailable, exceeded the size limit, or the platform rejected the request."
-                )
+                err_str = str(exc).lower()
+                if "bot" in err_str or "sign in" in err_str:
+                    detail = (
+                        "YouTube blocked this download with anti-bot verification.\n\n"
+                        "Send a <code>cookies.txt</code> file here to unlock."
+                    )
+                elif "audio rendition" in err_str:
+                    detail = (
+                        "Instagram did not provide any audio-enabled rendition for this Reel. "
+                        "A silent video was blocked instead of being sent."
+                    )
+                else:
+                    detail = "The media became unavailable, exceeded the size limit, or the platform rejected the request."
                 try:
                     await self.telegram.edit_message(
                         job.chat_id,

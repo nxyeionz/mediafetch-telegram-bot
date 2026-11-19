@@ -55,3 +55,14 @@ def test_store_shared_media_types(tmp_path: Path) -> None:
     assert pho.file_id == "pho_123"
     assert pho.media_type == "photo"
 
+
+def test_youtube_cookies_env(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("YOUTUBE_COOKIES", "# Netscape HTTP Cookie File\n.youtube.com TRUE / FALSE 1600000000 test value")
+    config = Config.from_env()
+    cookie_path = tmp_path / "cookies.txt"
+    assert cookie_path.exists()
+    assert "youtube.com" in cookie_path.read_text(encoding="utf-8")
+
+

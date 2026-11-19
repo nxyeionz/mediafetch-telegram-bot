@@ -156,25 +156,22 @@ async def health(_: web.Request) -> web.Response:
 async def diag(request: web.Request) -> web.Response:
     url = request.query.get("url", "https://youtu.be/YihPV4eSHsQ")
     import yt_dlp
+    from .downloader import get_cookie_file
 
+    cf = get_cookie_file()
+    results = {"cookie_file_active": bool(cf), "cookie_path": cf}
     clients_to_test = [
-        ["ios"],
         ["android"],
-        ["tv"],
-        ["tv_embedded"],
-        ["web_embedded"],
-        ["mweb"],
-        ["android_vr"],
-        ["ios", "android"],
-        ["tv", "android"],
+        ["ios"],
+        ["web"],
     ]
-    results = {}
     for clients in clients_to_test:
         key = ",".join(clients)
         opts = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
+            "cookiefile": cf,
             "extractor_args": {
                 "youtube": {
                     "player_client": clients,

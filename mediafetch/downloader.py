@@ -113,6 +113,25 @@ def _extractor_args() -> dict[str, dict[str, list[str]]]:
     return args
 
 
+def get_cookie_file() -> str | None:
+    data_dir = Path(os.getenv("DATA_DIR", "/data"))
+    candidates = [
+        data_dir / "cookies.txt",
+        Path("cookies.txt"),
+        Path("/etc/secrets/cookies.txt"),
+    ]
+    for p in candidates:
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return str(p.resolve())
+        except Exception:
+            pass
+    return None
+
+
+_cookie_file = get_cookie_file
+
+
 @dataclass(frozen=True)
 class MediaInfo:
     url: str
@@ -503,7 +522,7 @@ def probe_sync(url: str) -> MediaInfo:
         "no_warnings": True,
         "noplaylist": True,
         "skip_download": True,
-        "cookiefile": None,
+        "cookiefile": _cookie_file(),
         "cookiesfrombrowser": None,
         "extractor_args": _extractor_args(),
         "extract_flat": False,
@@ -512,6 +531,8 @@ def probe_sync(url: str) -> MediaInfo:
         with yt_dlp.YoutubeDL(options) as ydl:
             info = ydl.extract_info(url, download=False)
     except yt_dlp.utils.DownloadError as exc:
+        raise MediaError(str(exc)) from exc
+    except Exception as exc:
         raise MediaError(str(exc)) from exc
     if not info:
         raise MediaError("No media found")
@@ -639,7 +660,7 @@ def _download_sync(
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
-        "cookiefile": None,
+        "cookiefile": _cookie_file(),
         "cookiesfrombrowser": None,
         "extractor_args": _extractor_args(),
         "merge_output_format": "mp4",
@@ -754,6 +775,7 @@ def _download_audio_sync(
         "quiet": True,
         "no_warnings": True,
         "noplaylist": True,
+        "cookiefile": _cookie_file(),
         "extractor_args": _extractor_args(),
         "format": "bestaudio/best",
         "postprocessors": [
