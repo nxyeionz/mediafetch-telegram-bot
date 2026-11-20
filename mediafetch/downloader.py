@@ -100,15 +100,14 @@ class MediaError(RuntimeError):
 
 
 def _extractor_args() -> dict[str, dict[str, list[str]]]:
-    provider_url = os.getenv("YTDLP_POT_PROVIDER_URL", "").strip()
+    provider_url = os.getenv("YTDLP_POT_PROVIDER_URL", "http://127.0.0.1:4416").strip()
     args: dict[str, dict[str, list[str]]] = {
         "youtube": {
-            "player_client": ["android", "web"],
+            "player_client": ["mweb", "android", "web"],
             "formats": ["missing_pot"],
         }
     }
     if provider_url:
-        args["youtube"]["player_client"] = ["mweb"]
         args["youtubepot-bgutilhttp"] = {"base_url": [provider_url.rstrip("/")]}
     return args
 

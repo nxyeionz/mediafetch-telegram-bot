@@ -156,28 +156,37 @@ async def health(_: web.Request) -> web.Response:
 async def diag(request: web.Request) -> web.Response:
     url = request.query.get("url", "https://youtu.be/YihPV4eSHsQ")
     import yt_dlp
-    from .downloader import get_cookie_file
+    from .downloader import get_cookie_file, _extractor_args
 
     cf = get_cookie_file()
-    results = {"cookie_file_active": bool(cf), "cookie_path": cf}
+    pot_active = False
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get("http://127.0.0.1:4416/ping", timeout=aiohttp.ClientTimeout(total=2)) as r:
+                pot_active = r.status in (200, 404)
+    except Exception:
+        pass
+
+    results = {
+        "cookie_file_active": bool(cf),
+        "cookie_path": cf,
+        "pot_provider_active": pot_active,
+    }
     clients_to_test = [
+        ["mweb"],
         ["android"],
-        ["ios"],
         ["web"],
     ]
     for clients in clients_to_test:
         key = ",".join(clients)
+        ext_args = _extractor_args()
+        ext_args["youtube"]["player_client"] = clients
         opts = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
             "cookiefile": cf,
-            "extractor_args": {
-                "youtube": {
-                    "player_client": clients,
-                    "formats": ["missing_pot"],
-                }
-            },
+            "extractor_args": ext_args,
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
@@ -265,7 +274,38 @@ async def periodic_cleanup(store: Store, interval_seconds: int = 3600) -> None:
             logger.exception("Error during expired media cleanup")
 
 
+async def start_pot_server() -> asyncio.subprocess.Process | None:
+    candidates = [
+        Path("/pot_server/build/main.js"),
+        Path("/pot_server/dist/main.js"),
+        Path("/pot_server/main.js"),
+    ]
+    server_main = next((p for p in candidates if p.is_file()), None)
+    if not server_main:
+        logger.info("POT provider server script not found on disk, skipping auto-start")
+        return None
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "node",
+            str(server_main),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "4416",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        logger.info("Started bgutil POT provider on 127.0.0.1:4416 (pid=%d)", proc.pid)
+        await asyncio.sleep(1.5)
+        return proc
+    except Exception as exc:
+        logger.warning("Failed to start bgutil POT provider: %s", exc)
+        return None
+
+
 async def run() -> None:
+    pot_proc = await start_pot_server()
     config = Config.from_env()
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.jobs_dir.mkdir(parents=True, exist_ok=True)
@@ -293,6 +333,11 @@ async def run() -> None:
         finally:
             cleanup_task.cancel()
             await runner.cleanup()
+            if pot_proc and pot_proc.returncode is None:
+                try:
+                    pot_proc.terminate()
+                except Exception:
+                    pass
 
 
 def main() -> None:

@@ -32,3 +32,5 @@ services:
         sync: false
       - key: TELEGRAM_API_HASH
         sync: false
+      - key: YTDLP_POT_PROVIDER_URL
+        value: "http://127.0.0.1:4416"
