@@ -24,6 +24,24 @@ def _bool(value: str) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _load_dotenv(path: Path | None = None) -> None:
+    targets = [path] if path else [Path(".env"), Path(__file__).resolve().parent.parent / ".env"]
+    for t in targets:
+        if t and t.is_file():
+            try:
+                for line in t.read_text(encoding="utf-8").splitlines():
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, v = line.split("=", 1)
+                    k = k.strip()
+                    v = v.strip().strip("'\"")
+                    if k not in os.environ:
+                        os.environ[k] = v
+            except Exception:
+                pass
+
+
 @dataclass(frozen=True)
 class Config:
     bot_token: str
@@ -69,6 +87,7 @@ class Config:
 
     @classmethod
     def from_env(cls) -> "Config":
+        _load_dotenv()
         data_dir = Path(os.getenv("DATA_DIR", "/data")).resolve()
         cookies_env = os.getenv("YOUTUBE_COOKIES", "").strip()
         if cookies_env:
