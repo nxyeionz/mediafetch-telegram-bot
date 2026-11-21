@@ -175,7 +175,7 @@ def test_youtube_extractor_args() -> None:
     args = _extractor_args()
     assert "youtube" in args
     assert "android" in args["youtube"]["player_client"]
-    assert "missing_pot" in args["youtube"]["formats"]
+    assert "mweb" in args["youtube"]["player_client"]
 
 
 def test_quality_options_includes_all_resolutions() -> None:
