@@ -173,29 +173,33 @@ async def diag(request: web.Request) -> web.Response:
         "pot_provider_active": pot_active,
     }
     clients_to_test = [
-        ["mweb"],
-        ["android"],
+        [],  # default yt-dlp
         ["web"],
+        ["android"],
+        ["ios"],
     ]
     for clients in clients_to_test:
-        key = ",".join(clients)
-        ext_args = _extractor_args()
-        ext_args["youtube"]["player_client"] = clients
+        key = ",".join(clients) if clients else "default"
+        ext_args = _extractor_args().copy()
+        if clients:
+            ext_args["youtube"] = {"player_client": clients}
         opts = {
             "quiet": True,
             "no_warnings": True,
             "skip_download": True,
             "cookiefile": cf,
-            "extractor_args": ext_args,
+            "js_runtimes": {"node": {}},
+            "remote_components": {"ejs:github"},
+            "extractor_args": ext_args if ext_args else None,
         }
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = await asyncio.to_thread(ydl.extract_info, url, download=False)
                 fmts = info.get("formats") or []
                 heights = sorted(set(f["height"] for f in fmts if f.get("height")))
-                results[key] = {"ok": True, "title": info.get("title")[:40], "heights": heights}
+                results[key] = {"ok": True, "title": info.get("title")[:40], "heights": heights, "formats_count": len(fmts)}
         except Exception as e:
-            results[key] = {"ok": False, "error": str(e)[:150]}
+            results[key] = {"ok": False, "error": str(e)[:200]}
 
     return web.json_response(results)
 

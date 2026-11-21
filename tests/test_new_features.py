@@ -169,13 +169,13 @@ async def test_web_routes(tmp_path: Path) -> None:
         assert resp.status == 404
 
 
-def test_youtube_extractor_args() -> None:
+def test_youtube_extractor_args(monkeypatch) -> None:
     from mediafetch.downloader import _extractor_args
 
+    monkeypatch.setenv("YTDLP_POT_PROVIDER_URL", "http://127.0.0.1:4416")
     args = _extractor_args()
-    assert "youtube" in args
-    assert "android" in args["youtube"]["player_client"]
-    assert "mweb" in args["youtube"]["player_client"]
+    assert "youtubepot-bgutilhttp" in args
+    assert args["youtubepot-bgutilhttp"]["base_url"] == ["http://127.0.0.1:4416"]
 
 
 def test_quality_options_includes_all_resolutions() -> None:

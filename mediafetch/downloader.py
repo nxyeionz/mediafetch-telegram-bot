@@ -101,14 +101,23 @@ class MediaError(RuntimeError):
 
 def _extractor_args() -> dict[str, dict[str, list[str]]]:
     provider_url = os.getenv("YTDLP_POT_PROVIDER_URL", "http://127.0.0.1:4416").strip()
-    args: dict[str, dict[str, list[str]]] = {
-        "youtube": {
-            "player_client": ["mweb", "web", "android"],
-        }
-    }
+    args: dict[str, dict[str, list[str]]] = {}
     if provider_url:
         args["youtubepot-bgutilhttp"] = {"base_url": [provider_url.rstrip("/")]}
     return args
+
+
+def _base_ydl_options() -> dict[str, Any]:
+    return {
+        "quiet": True,
+        "no_warnings": True,
+        "noplaylist": True,
+        "cookiefile": _cookie_file(),
+        "cookiesfrombrowser": None,
+        "extractor_args": _extractor_args(),
+        "js_runtimes": {"node": {}},
+        "remote_components": {"ejs:github"},
+    }
 
 
 def get_cookie_file() -> str | None:
@@ -516,13 +525,8 @@ def probe_sync(url: str) -> MediaInfo:
             logger.info("parth_dl Instagram probe failed, falling back to yt-dlp: %s", exc)
 
     options = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
+        **_base_ydl_options(),
         "skip_download": True,
-        "cookiefile": _cookie_file(),
-        "cookiesfrombrowser": None,
-        "extractor_args": _extractor_args(),
         "extract_flat": False,
     }
     try:
@@ -655,12 +659,7 @@ def _download_sync(
             )
 
     base_options = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "cookiefile": _cookie_file(),
-        "cookiesfrombrowser": None,
-        "extractor_args": _extractor_args(),
+        **_base_ydl_options(),
         "merge_output_format": "mp4",
         "outtmpl": str(directory / "%(id)s.%(ext)s"),
         "progress_hooks": [hook],
@@ -770,11 +769,7 @@ def _download_audio_sync(
             )
 
     options = {
-        "quiet": True,
-        "no_warnings": True,
-        "noplaylist": True,
-        "cookiefile": _cookie_file(),
-        "extractor_args": _extractor_args(),
+        **_base_ydl_options(),
         "format": "bestaudio/best",
         "postprocessors": [
             {
