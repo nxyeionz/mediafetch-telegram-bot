@@ -103,6 +103,22 @@ def human_bytes(value: int | None) -> str:
     return ""
 
 
+def quality_label(height: int) -> str:
+    if height >= 4320:
+        return f"{height}p (8K)"
+    if height >= 2160:
+        return f"{height}p (4K)"
+    if height >= 1440:
+        return f"{height}p (2K)"
+    if height == 1080:
+        return f"{height}p (Full HD)"
+    if height == 720:
+        return f"{height}p (HD)"
+    if height <= 480:
+        return f"{height}p (SD)"
+    return f"{height}p"
+
+
 def quality_keyboard(job_id: str, qualities: list[Quality]) -> dict[str, Any]:
     if not qualities:
         return keyboard(
@@ -114,17 +130,13 @@ def quality_keyboard(job_id: str, qualities: list[Quality]) -> dict[str, Any]:
     highest = ordered[0].height
     rows: list[list[dict[str, Any]]] = []
     for item in ordered:
-        label = f"{item.height}p"
+        label = quality_label(item.height)
         style = None
         if item.height == highest:
             label += " • Best"
             style = "success"
-        if item.height == 1080:
-            label += " • Full HD"
-            if style is None:
-                style = "primary"
-        elif item.height == 720 and style is None:
-            label += " • HD"
+        elif item.height == 1080:
+            style = "primary"
         size = human_bytes(item.estimated_bytes)
         if size:
             label += f" (~{size})"

@@ -187,7 +187,7 @@ def quality_options(info: dict[str, Any]) -> list[Quality]:
         for item in formats
         if item.get("height") and item.get("vcodec") != "none"
     }
-    standard = [2160, 1440, 1080, 720, 480, 360, 240, 144]
+    standard = [4320, 2160, 1440, 1080, 720, 480, 360, 240, 144]
     selected = [h for h in standard if h in available]
     if not selected and available:
         selected = sorted(available, reverse=True)[:6]
