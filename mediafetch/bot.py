@@ -623,16 +623,21 @@ class Bot:
                                 peer = await self.telethon.get_input_entity(job.chat_id)
                             except Exception:
                                 peer = job.chat_id
-                            logger.info("Uploading %s (size=%d bytes) via Telethon to entity %s", path.name, size, peer)
+                            logger.info("Uploading %s (size=%d bytes, 512KB chunks) via Telethon to entity %s", path.name, size, peer)
+                            file_handle = await self.telethon.upload_file(
+                                path,
+                                file_name=path.name,
+                                part_size_kb=512,
+                                progress_callback=telethon_progress,
+                            )
                             await self.telethon.send_file(
                                 entity=peer,
-                                file=path,
+                                file=file_handle,
                                 caption=caption_text,
                                 parse_mode="html",
                                 attributes=attrs if attrs else None,
                                 supports_streaming=is_video,
                                 reply_to=reply_to,
-                                progress_callback=telethon_progress,
                             )
                             uploaded_via_telethon = True
                             logger.info("Telethon direct upload succeeded for %s", path.name)
