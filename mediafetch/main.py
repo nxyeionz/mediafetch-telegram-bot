@@ -240,6 +240,30 @@ async def handle_diag_error(request: web.Request) -> web.Response:
         })
 
 
+async def handle_diag_telethon(request: web.Request) -> web.Response:
+    bot: Bot | None = request.app.get("bot")
+    chat_id = int(request.query.get("chat_id", "0"))
+    res: dict[str, Any] = {
+        "has_bot": bot is not None,
+        "has_telethon": bool(bot and bot.telethon),
+        "is_connected": bool(bot and bot.telethon and bot.telethon.is_connected()),
+    }
+    if bot and bot.telethon and bot.telethon.is_connected():
+        try:
+            me = await bot.telethon.get_me()
+            res["bot_username"] = getattr(me, "username", None)
+            res["bot_id"] = getattr(me, "id", None)
+            if chat_id:
+                try:
+                    ent = await bot.telethon.get_input_entity(chat_id)
+                    res["entity_found"] = str(ent)
+                except Exception as e:
+                    res["entity_error"] = str(e)
+        except Exception as e:
+            res["error"] = str(e)
+    return web.json_response(res)
+
+
 async def handle_update_cookies(request: web.Request) -> web.Response:
     config: Config = request.app["config"]
     secret = request.headers.get("X-Secret", "")
@@ -379,8 +403,10 @@ async def run() -> None:
         app = web.Application()
         app["store"] = store
         app["config"] = config
+        app["bot"] = bot
         app.router.add_get("/health", health)
         app.router.add_get("/diag", diag)
+        app.router.add_get("/diag_telethon", handle_diag_telethon)
         app.router.add_get("/diag_error", handle_diag_error)
         app.router.add_post("/update_cookies", handle_update_cookies)
         app.router.add_get("/dl/{token}", handle_download)
