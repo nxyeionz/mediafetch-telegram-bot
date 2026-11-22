@@ -408,6 +408,21 @@ async def run() -> None:
     config.data_dir.mkdir(parents=True, exist_ok=True)
     config.jobs_dir.mkdir(parents=True, exist_ok=True)
     config.web_media_dir.mkdir(parents=True, exist_ok=True)
+    import shutil
+    try:
+        for item in config.jobs_dir.iterdir():
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
+    except Exception:
+        pass
+    try:
+        shm = Path("/dev/shm/mediafetch_jobs")
+        if shm.is_dir():
+            shutil.rmtree(shm, ignore_errors=True)
+    except Exception:
+        pass
     store = Store(config.database_path)
     timeout = aiohttp.ClientTimeout(
         total=None, connect=30, sock_read=config.poll_timeout + 30

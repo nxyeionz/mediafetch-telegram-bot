@@ -73,16 +73,6 @@ class Config:
 
     @property
     def temp_processing_dir(self) -> Path:
-        shm = Path("/dev/shm/mediafetch_jobs")
-        try:
-            if Path("/dev/shm").is_dir():
-                shm.mkdir(parents=True, exist_ok=True)
-                test = shm / ".write_test"
-                test.write_text("ok")
-                test.unlink(missing_ok=True)
-                return shm
-        except Exception:
-            pass
         return self.jobs_dir
 
     @classmethod
