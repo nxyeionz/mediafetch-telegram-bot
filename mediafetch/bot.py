@@ -583,6 +583,7 @@ class Bot:
                                 f"<b>📤 Uploading to Telegram (Direct 2GB MTProto)</b>\n\nSize: {human_bytes(size)}\n░░░░░░░░░░ 0%",
                                 cancel_keyboard(),
                             )
+                            start_up_time = time.monotonic()
                             last_telethon_up = 0.0
 
                             async def telethon_progress(current: int, total: int) -> None:
@@ -591,15 +592,19 @@ class Bot:
                                     if job.cancel.is_set():
                                         return
                                     now = time.monotonic()
-                                    if now - last_telethon_up >= 2:
+                                    if now - last_telethon_up >= 1.5:
                                         last_telethon_up = now
                                         pct = min(99, int(current * 100 / total)) if total else 0
                                         filled_b = pct // 10
                                         prog = "█" * filled_b + "░" * (10 - filled_b)
+                                        elapsed = max(0.1, now - start_up_time)
+                                        speed = current / elapsed
                                         await self.telegram.edit_message(
                                             job.chat_id,
                                             job.panel_message_id,
-                                            f"<b>📤 Uploading direct to Telegram</b>\n\n{prog} {pct}%\n{human_bytes(current)} / {human_bytes(total)}",
+                                            f"<b>⚡ Uploading to Telegram (Turbo {human_bytes(int(speed))}/s)</b>\n\n"
+                                            f"{prog} {pct}%\n"
+                                            f"{human_bytes(current)} / {human_bytes(total)}",
                                             cancel_keyboard(),
                                         )
                                 except Exception:
@@ -623,13 +628,25 @@ class Bot:
                                 peer = await self.telethon.get_input_entity(job.chat_id)
                             except Exception:
                                 peer = job.chat_id
-                            logger.info("Uploading %s (size=%d bytes, 512KB chunks) via Telethon to entity %s", path.name, size, peer)
-                            file_handle = await self.telethon.upload_file(
-                                path,
-                                file_name=path.name,
-                                part_size_kb=512,
-                                progress_callback=telethon_progress,
-                            )
+                            logger.info("Uploading %s (size=%d bytes, parallel Turbo MTProto) via Telethon to entity %s", path.name, size, peer)
+                            try:
+                                from .fast_telethon import fast_upload_file
+                                file_handle = await fast_upload_file(
+                                    self.telethon,
+                                    path,
+                                    name=path.name,
+                                    progress_callback=telethon_progress,
+                                    connection_count=12,
+                                    part_size_kb=512,
+                                )
+                            except Exception:
+                                logger.exception("Fast parallel upload failed, falling back to standard upload")
+                                file_handle = await self.telethon.upload_file(
+                                    path,
+                                    file_name=path.name,
+                                    part_size_kb=512,
+                                    progress_callback=telethon_progress,
+                                )
                             await self.telethon.send_file(
                                 entity=peer,
                                 file=file_handle,
