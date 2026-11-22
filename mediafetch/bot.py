@@ -604,8 +604,13 @@ class Bot:
                                 if is_audio
                                 else format_caption(job.info, actual_height, size, is_video=is_video)
                             )
+                            try:
+                                peer = await self.telethon.get_input_entity(job.chat_id)
+                            except Exception:
+                                peer = job.chat_id
+                            logger.info("Uploading %s (size=%d bytes) via Telethon to entity %s", path.name, size, peer)
                             await self.telethon.send_file(
-                                entity=job.chat_id,
+                                entity=peer,
                                 file=path,
                                 caption=caption_text,
                                 supports_streaming=is_video,
@@ -613,6 +618,7 @@ class Bot:
                                 progress_callback=telethon_progress,
                             )
                             uploaded_via_telethon = True
+                            logger.info("Telethon direct upload succeeded for %s", path.name)
                         except Exception:
                             logger.exception("Telethon direct upload failed, falling back to web server")
 
