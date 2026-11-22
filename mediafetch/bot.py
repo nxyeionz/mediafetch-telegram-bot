@@ -24,6 +24,7 @@ from .downloader import (
     safe,
     supported_url,
     _video_height,
+    _video_stream,
 )
 from .store import SharedMedia, Store, WebMedia
 from .telegram import Telegram, TelegramError
@@ -569,8 +570,12 @@ class Bot:
 
                 if size > self.config.max_file_bytes:
                     uploaded_via_telethon = False
-                    if self.telethon and self.telethon.is_connected():
+                    if self.telethon:
                         try:
+                            if not self.telethon.is_connected():
+                                await self.telethon.connect()
+                            if not await self.telethon.is_user_authorized():
+                                await self.telethon.start(bot_token=self.config.bot_token)
                             await self.telegram.edit_message(
                                 job.chat_id,
                                 job.panel_message_id,
@@ -604,6 +609,15 @@ class Bot:
                                 if is_audio
                                 else format_caption(job.info, actual_height, size, is_video=is_video)
                             )
+                            attrs = []
+                            if is_video:
+                                from telethon.tl.types import DocumentAttributeVideo
+                                st = _video_stream(path)
+                                w = int(st["width"]) if (st and st.get("width")) else 1920
+                                h = int(st["height"]) if (st and st.get("height")) else (actual_height or 1080)
+                                dur = float(job.info.duration or 0)
+                                attrs.append(DocumentAttributeVideo(duration=dur, w=w, h=h, supports_streaming=True))
+
                             try:
                                 peer = await self.telethon.get_input_entity(job.chat_id)
                             except Exception:
@@ -613,6 +627,8 @@ class Bot:
                                 entity=peer,
                                 file=path,
                                 caption=caption_text,
+                                parse_mode="html",
+                                attributes=attrs if attrs else None,
                                 supports_streaming=is_video,
                                 reply_to=reply_to,
                                 progress_callback=telethon_progress,
@@ -756,7 +772,10 @@ class Bot:
                         caption=batch_caption,
                         reply_to_message_id=chunk_reply_to,
                     )
-            await self.telegram.delete_message(job.chat_id, job.panel_message_id)
+            try:
+                await self.telegram.delete_message(job.chat_id, job.panel_message_id)
+            except TelegramError:
+                pass
         except MediaError as exc:
             if not job.cancel.is_set():
                 logger.warning("Download failed: %s", exc)

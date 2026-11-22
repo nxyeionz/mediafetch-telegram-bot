@@ -274,6 +274,27 @@ async def handle_diag_telethon(request: web.Request) -> web.Response:
                     res["entity_found"] = str(ent)
                 except Exception as e:
                     res["entity_error"] = str(e)
+                if request.query.get("send_test"):
+                    import traceback
+                    try:
+                        if not bot.telethon.is_connected():
+                            await bot.telethon.connect()
+                        ent = await bot.telethon.get_input_entity(chat_id)
+                        diag_files = list(Path("/data/jobs/diag_test").glob("*.mp4"))
+                        send_path = diag_files[0] if diag_files else Path("/tmp/test.mp4")
+                        if not send_path.exists():
+                            send_path.write_bytes(b"\x00" * 1024)
+                        msg = await bot.telethon.send_file(
+                            ent,
+                            file=send_path,
+                            caption="🎬 <b>Yuta Okkotsu - LUZ ROJA [Edit/AMV] 4k!</b>\nQuality: 2160p (4K)",
+                            supports_streaming=True,
+                        )
+                        res["send_test_ok"] = True
+                        res["sent_msg_id"] = getattr(msg, "id", None)
+                    except Exception as e:
+                        res["send_test_error"] = str(e)
+                        res["send_test_tb"] = traceback.format_exc()
         except Exception as e:
             res["error"] = str(e)
     return web.json_response(res)
