@@ -207,6 +207,25 @@ async def diag(request: web.Request) -> web.Response:
     return web.json_response(results)
 
 
+async def handle_update_cookies(request: web.Request) -> web.Response:
+    config: Config = request.app["config"]
+    secret = request.headers.get("X-Secret", "")
+    if secret != config.bot_token:
+        return web.Response(status=403, text="Forbidden")
+    content = await request.read()
+    if not content:
+        return web.Response(status=400, text="Empty content")
+    dest = config.data_dir / "cookies.txt"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(content)
+    try:
+        Path("cookies.txt").write_bytes(content)
+    except Exception:
+        pass
+    logger.info("Updated cookies via HTTP API (size=%d bytes)", len(content))
+    return web.json_response({"ok": True, "size": len(content)})
+
+
 async def handle_download(request: web.Request) -> web.StreamResponse:
     store: Store = request.app["store"]
     token = request.match_info.get("token", "")
@@ -326,8 +345,10 @@ async def run() -> None:
         bot = Bot(config, telegram, store)
         app = web.Application()
         app["store"] = store
+        app["config"] = config
         app.router.add_get("/health", health)
         app.router.add_get("/diag", diag)
+        app.router.add_post("/update_cookies", handle_update_cookies)
         app.router.add_get("/dl/{token}", handle_download)
         app.router.add_get("/watch/{token}", handle_watch)
         runner = web.AppRunner(app)
