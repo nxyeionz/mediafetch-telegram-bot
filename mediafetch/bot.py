@@ -23,6 +23,7 @@ from .downloader import (
     probe,
     safe,
     supported_url,
+    _video_height,
 )
 from .store import SharedMedia, Store, WebMedia
 from .telegram import Telegram, TelegramError
@@ -563,7 +564,8 @@ class Bot:
             if len(paths) == 1:
                 path = paths[0]
                 size = path.stat().st_size
-                is_video = path.suffix.lower() == ".mp4"
+                is_video = path.suffix.lower() in {".mp4", ".mkv", ".webm"}
+                actual_height = (_video_height(path) if is_video else None) or height
 
                 if size > self.config.max_file_bytes:
                     uploaded_via_telethon = False
@@ -600,7 +602,7 @@ class Bot:
                             caption_text = (
                                 format_audio_caption(job.info, size)
                                 if is_audio
-                                else format_caption(job.info, height, size, is_video=is_video)
+                                else format_caption(job.info, actual_height, size, is_video=is_video)
                             )
                             await self.telethon.send_file(
                                 entity=job.chat_id,
@@ -691,7 +693,7 @@ class Bot:
                             ),
                         )
                 elif is_video:
-                    caption = format_caption(job.info, height, size, is_video=True)
+                    caption = format_caption(job.info, actual_height, size, is_video=True)
                     message = await self.telegram.send_video(
                         job.chat_id,
                         path,

@@ -46,8 +46,9 @@ def test_quality_options_are_standard_and_estimated() -> None:
 
 
 def test_format_selector_requires_audio_with_combined_fallback() -> None:
-    assert _format_selector(None) == "bv+ba/b"
-    assert _format_selector(2160) == "bv[height<=2160]+ba/b[height<=2160]"
+    assert _format_selector(None) == "bv*+ba[ext=m4a]/bv*+ba/b"
+    assert "height=2160" in _format_selector(2160)
+    assert "ext=m4a" in _format_selector(2160)
     assert _format_selector(None, combined_only=True) == "b[vcodec!=none][acodec!=none]"
 
 

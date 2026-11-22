@@ -262,7 +262,53 @@ def _format_selector(height: int | None, *, combined_only: bool = False) -> str:
     limit = f"[height<={height}]" if height else ""
     if combined_only:
         return f"b{limit}[vcodec!=none][acodec!=none]"
-    return f"bv{limit}+ba/b{limit}"
+    if height:
+        return (
+            f"bv*[height={height}]+ba[ext=m4a]/"
+            f"bv*[height={height}]+ba/"
+            f"bv*[height<={height}]+ba[ext=m4a]/"
+            f"bv*[height<={height}]+ba/"
+            f"b[height<={height}]"
+        )
+    return "bv*+ba[ext=m4a]/bv*+ba/b"
+
+
+def _video_stream(path: Path) -> dict[str, Any] | None:
+    try:
+        result = subprocess.run(
+            [
+                os.getenv("FFPROBE_BIN", "ffprobe"),
+                "-v",
+                "error",
+                "-select_streams",
+                "v:0",
+                "-show_entries",
+                "stream=width,height,codec_name",
+                "-of",
+                "json",
+                str(path),
+            ],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode == 0:
+            streams = json.loads(result.stdout).get("streams") or []
+            return streams[0] if streams else None
+    except Exception:
+        pass
+    return None
+
+
+def _video_height(path: Path) -> int | None:
+    st = _video_stream(path)
+    if st and st.get("height"):
+        try:
+            return int(st["height"])
+        except (ValueError, TypeError):
+            pass
+    return None
 
 
 def _audio_stream(path: Path) -> dict[str, Any] | None:
@@ -384,6 +430,8 @@ def _normalize_audio_for_telegram(path: Path) -> Path:
             "default",
             "-b:a",
             "192k",
+            "-strict",
+            "experimental",
             "-movflags",
             "+faststart",
             str(converted),
@@ -413,11 +461,10 @@ def _run_audio_conversion(command: list[str]) -> subprocess.CompletedProcess[str
 
 
 def _download_selectors(info: MediaInfo, height: int | None) -> list[str]:
-    selectors = [
-        _format_selector(height),
-        _format_selector(height, combined_only=True),
-        *_instagram_candidate_formats(info, height),
-    ]
+    selectors = [_format_selector(height)]
+    if not height or height <= 480:
+        selectors.append(_format_selector(height, combined_only=True))
+    selectors.extend(_instagram_candidate_formats(info, height))
     return list(dict.fromkeys(selectors))
 
 
@@ -667,7 +714,7 @@ def _download_sync(
         "retries": 3,
         "fragment_retries": 3,
         "concurrent_fragment_downloads": 2,
-        "postprocessor_args": {"ffmpeg": ["-threads", "4"]},
+        "postprocessor_args": {"ffmpeg": ["-threads", "4", "-strict", "experimental"]},
     }
     audio_required = _audio_is_required(info)
     output: Path | None = None

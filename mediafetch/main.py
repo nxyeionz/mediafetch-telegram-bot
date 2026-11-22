@@ -207,51 +207,6 @@ async def diag(request: web.Request) -> web.Response:
     return web.json_response(results)
 
 
-async def handle_test_download(request: web.Request) -> web.Response:
-    import yt_dlp
-    from .downloader import _base_ydl_options, _format_selector
-    url = request.query.get("url", "https://youtu.be/anTsfUY83K0")
-    height = int(request.query.get("height", "2160"))
-    test_dir = Path("/data/jobs/test_dl")
-    test_dir.mkdir(parents=True, exist_ok=True)
-    for p in test_dir.iterdir():
-        try:
-            p.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-    selectors = [
-        ("original", _format_selector(height)),
-        ("strict_mp4_m4a", f"bv*[height={height}][ext=mp4]+ba[ext=m4a]/bv*[height<={height}][ext=mp4]+ba[ext=m4a]"),
-        ("strict_height_m4a", f"bv*[height={height}]+ba[ext=m4a]/bv*[height<={height}]+ba[ext=m4a]"),
-        ("strict_height_any_audio", f"bv*[height={height}]+ba"),
-    ]
-    report: dict[str, Any] = {}
-    for name, sel in selectors:
-        for p in test_dir.iterdir():
-            p.unlink(missing_ok=True)
-        opts = {
-            **_base_ydl_options(),
-            "merge_output_format": "mp4",
-            "outtmpl": str(test_dir / "%(id)s.%(ext)s"),
-            "overwrites": True,
-            "format": sel,
-            "postprocessor_args": {"ffmpeg": ["-threads", "4"]},
-        }
-        try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = await asyncio.to_thread(ydl.extract_info, url, download=True)
-                downloaded_files = [
-                    {"name": p.name, "size": p.stat().st_size}
-                    for p in test_dir.iterdir()
-                ]
-                report[name] = {"ok": True, "selector": sel, "files": downloaded_files}
-        except Exception as e:
-            report[name] = {"ok": False, "selector": sel, "error": str(e)[:300]}
-
-    return web.json_response(report)
-
-
 async def handle_update_cookies(request: web.Request) -> web.Response:
     config: Config = request.app["config"]
     secret = request.headers.get("X-Secret", "")
@@ -393,7 +348,6 @@ async def run() -> None:
         app["config"] = config
         app.router.add_get("/health", health)
         app.router.add_get("/diag", diag)
-        app.router.add_get("/test_download", handle_test_download)
         app.router.add_post("/update_cookies", handle_update_cookies)
         app.router.add_get("/dl/{token}", handle_download)
         app.router.add_get("/watch/{token}", handle_watch)
