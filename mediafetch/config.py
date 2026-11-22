@@ -93,17 +93,16 @@ class Config:
         if cookies_env:
             try:
                 cookie_dest = data_dir / "cookies.txt"
-                if not cookie_dest.exists() or cookie_dest.stat().st_size == 0:
-                    cookie_dest.parent.mkdir(parents=True, exist_ok=True)
-                    import base64
-                    try:
-                        decoded = base64.b64decode(cookies_env).decode("utf-8")
-                        if "youtube" in decoded or "domain" in decoded or "#" in decoded:
-                            cookie_dest.write_text(decoded, encoding="utf-8")
-                        else:
-                            cookie_dest.write_text(cookies_env, encoding="utf-8")
-                    except Exception:
+                cookie_dest.parent.mkdir(parents=True, exist_ok=True)
+                import base64
+                try:
+                    decoded = base64.b64decode(cookies_env).decode("utf-8")
+                    if "youtube" in decoded or "domain" in decoded or "#" in decoded:
+                        cookie_dest.write_text(decoded, encoding="utf-8")
+                    else:
                         cookie_dest.write_text(cookies_env, encoding="utf-8")
+                except Exception:
+                    cookie_dest.write_text(cookies_env, encoding="utf-8")
             except Exception:
                 pass
         return cls(
