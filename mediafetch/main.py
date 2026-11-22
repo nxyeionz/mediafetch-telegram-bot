@@ -155,10 +155,11 @@ async def health(_: web.Request) -> web.Response:
 
 async def diag(request: web.Request) -> web.Response:
     url = request.query.get("url", "https://youtu.be/YihPV4eSHsQ")
+    use_cookies = request.query.get("use_cookies", "1") != "0"
     import yt_dlp
     from .downloader import get_cookie_file, _extractor_args
 
-    cf = get_cookie_file()
+    cf = get_cookie_file() if use_cookies else None
     pot_active = False
     try:
         async with aiohttp.ClientSession() as s:
@@ -174,9 +175,11 @@ async def diag(request: web.Request) -> web.Response:
     }
     clients_to_test = [
         [],  # default yt-dlp
+        ["mweb"],
         ["web"],
         ["android"],
         ["ios"],
+        ["tv"],
     ]
     for clients in clients_to_test:
         key = ",".join(clients) if clients else "default"
