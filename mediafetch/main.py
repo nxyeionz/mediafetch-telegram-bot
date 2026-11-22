@@ -253,6 +253,21 @@ async def handle_diag_telethon(request: web.Request) -> web.Response:
             me = await bot.telethon.get_me()
             res["bot_username"] = getattr(me, "username", None)
             res["bot_id"] = getattr(me, "id", None)
+            import sqlite3
+            db_path = request.app["config"].database_path
+            try:
+                conn = sqlite3.connect(str(db_path))
+                c = conn.cursor()
+                users = [r[0] for r in c.execute("SELECT DISTINCT owner_id FROM shared_media LIMIT 5").fetchall()]
+                res["recent_users"] = users
+                for uid in users:
+                    try:
+                        ent = await bot.telethon.get_input_entity(uid)
+                        res[f"user_{uid}"] = str(ent)
+                    except Exception as e:
+                        res[f"user_{uid}_error"] = str(e)
+            except Exception as e:
+                res["db_error"] = str(e)
             if chat_id:
                 try:
                     ent = await bot.telethon.get_input_entity(chat_id)
