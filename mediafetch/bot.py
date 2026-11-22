@@ -5,6 +5,7 @@ import logging
 import secrets
 import shutil
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -585,24 +586,24 @@ class Bot:
                             last_telethon_up = 0.0
 
                             async def telethon_progress(current: int, total: int) -> None:
-                                nonlocal last_telethon_up
-                                if job.cancel.is_set():
-                                    return
-                                now = time.monotonic()
-                                if now - last_telethon_up >= 2:
-                                    last_telethon_up = now
-                                    pct = min(99, int(current * 100 / total)) if total else 0
-                                    filled_b = pct // 10
-                                    prog = "█" * filled_b + "░" * (10 - filled_b)
-                                    try:
+                                try:
+                                    nonlocal last_telethon_up
+                                    if job.cancel.is_set():
+                                        return
+                                    now = time.monotonic()
+                                    if now - last_telethon_up >= 2:
+                                        last_telethon_up = now
+                                        pct = min(99, int(current * 100 / total)) if total else 0
+                                        filled_b = pct // 10
+                                        prog = "█" * filled_b + "░" * (10 - filled_b)
                                         await self.telegram.edit_message(
                                             job.chat_id,
                                             job.panel_message_id,
                                             f"<b>📤 Uploading direct to Telegram</b>\n\n{prog} {pct}%\n{human_bytes(current)} / {human_bytes(total)}",
                                             cancel_keyboard(),
                                         )
-                                    except TelegramError:
-                                        pass
+                                except Exception:
+                                    pass
 
                             caption_text = (
                                 format_audio_caption(job.info, size)
