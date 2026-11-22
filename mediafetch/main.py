@@ -207,6 +207,39 @@ async def diag(request: web.Request) -> web.Response:
     return web.json_response(results)
 
 
+async def handle_diag_error(request: web.Request) -> web.Response:
+    import traceback
+    import threading
+    from .downloader import probe_sync, _download_sync
+    url = request.query.get("url", "https://youtu.be/anTsfUY83K0")
+    height = int(request.query.get("height", "2160"))
+    test_dir = Path("/data/jobs/diag_test")
+    test_dir.mkdir(parents=True, exist_ok=True)
+    for p in test_dir.iterdir():
+        p.unlink(missing_ok=True)
+    try:
+        info = await asyncio.to_thread(probe_sync, url)
+        loop = asyncio.get_running_loop()
+        async def dummy_progress(d, t, s):
+            pass
+        cancel = threading.Event()
+        paths = await asyncio.to_thread(
+            _download_sync, info, height, test_dir, 2147483648, cancel, loop, dummy_progress
+        )
+        return web.json_response({
+            "ok": True,
+            "paths": [str(p) for p in paths],
+            "sizes": [p.stat().st_size for p in paths]
+        })
+    except Exception as exc:
+        return web.json_response({
+            "ok": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+        })
+
+
 async def handle_update_cookies(request: web.Request) -> web.Response:
     config: Config = request.app["config"]
     secret = request.headers.get("X-Secret", "")
@@ -348,6 +381,7 @@ async def run() -> None:
         app["config"] = config
         app.router.add_get("/health", health)
         app.router.add_get("/diag", diag)
+        app.router.add_get("/diag_error", handle_diag_error)
         app.router.add_post("/update_cookies", handle_update_cookies)
         app.router.add_get("/dl/{token}", handle_download)
         app.router.add_get("/watch/{token}", handle_watch)

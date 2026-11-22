@@ -769,9 +769,11 @@ def _download_sync(
             )
             break
     if output is None:
-        if last_download_error and not audio_required:
+        if last_download_error:
             raise MediaError(str(last_download_error)) from last_download_error
-        raise MediaError("Instagram did not expose an audio rendition for this Reel")
+        if info.platform == "Instagram":
+            raise MediaError("Instagram did not expose an audio rendition for this Reel")
+        raise MediaError("No compatible media stream found for this video")
     if output.stat().st_size > max_bytes:
         raise MediaError("Selected quality exceeds the configured size limit")
     return [output]

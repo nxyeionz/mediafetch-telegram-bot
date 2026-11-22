@@ -760,13 +760,13 @@ class Bot:
                         "YouTube blocked this download with anti-bot verification.\n\n"
                         "Send a <code>cookies.txt</code> file here to unlock."
                     )
-                elif "audio rendition" in err_str:
+                elif "audio rendition" in err_str and getattr(job.info, "platform", "") == "Instagram":
                     detail = (
                         "Instagram did not provide any audio-enabled rendition for this Reel. "
                         "A silent video was blocked instead of being sent."
                     )
                 else:
-                    detail = "The media became unavailable, exceeded the size limit, or the platform rejected the request."
+                    detail = f"The download could not be completed: {safe(str(exc))[:200]}"
                 try:
                     await self.telegram.edit_message(
                         job.chat_id,
